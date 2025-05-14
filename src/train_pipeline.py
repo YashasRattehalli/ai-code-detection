@@ -20,10 +20,10 @@ from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
-# Import project modules
-from config import FEATURE_COLUMNS, FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
 from sklearn.model_selection import StratifiedKFold
 
+# Import project modules
+from config import FEATURE_COLUMNS, FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
 from models.xgboost_model import UnixCoderEncoder, XGBoostClassifier
 
 # Set up logging
@@ -68,9 +68,6 @@ def process_dataset(
         usecols=['code', 'language', 'target', 'features'],
         dtype={'code': str, 'language': str, 'target': str, 'features': str}
     )
-    
-    df = df.groupby('target', group_keys=False).apply(lambda x: x.sample(1000))
-
     
     logger.info(f"Loaded {len(df)} records from dataset")
     
@@ -333,18 +330,13 @@ def train_pipeline(
     
     # Train final model on all data
     logger.info("Training final model on all data...")
-    
-    # Create DMatrix objects for XGBoost directly instead of using train method with None validation data
-    import xgboost as xgb
-    dtrain = xgb.DMatrix(X, label=y)
-    
-    # Train model without validation set
-    logger.info("Training final model without validation set...")
-    classifier.model = xgb.train(
-        classifier.params,
-        dtrain,
+    final_metrics = classifier.train(
+        X_train=X,
+        y_train=y,
+        X_val=None,
+        y_val=None,
         num_boost_round=training_config["num_boost_round"],
-        verbose_eval=100
+        early_stopping_rounds=None  # No early stopping for final model
     )
     
     # Save the final model
@@ -357,7 +349,7 @@ def train_pipeline(
     return {
         'fold_metrics': all_metrics,
         'average_metrics': avg_metrics,
-        'final_model_metrics': classifier.model.get_fscore()
+        'final_model_metrics': final_metrics
     }
 
 def main():
