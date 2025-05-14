@@ -1,7 +1,9 @@
 import os
+
 import pandas as pd
 from huggingface_hub import login
 from huggingface_hub.hf_api import HfApi
+
 
 def download_dataset(dataset_path, 
                      token=None, output_dir="./data"):
@@ -65,7 +67,7 @@ if __name__ == "__main__":
     # Example usage
     # Note: Set your token or login using huggingface-cli login first
     #df = download_dataset("datasets/DaniilOr/CoDET-M4/dataset_without_comments.parquet",
-    #                     token="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")
+    #                     token="dummy")
     #print(f"Dataset shape: {df.shape}")
     #print(df.head())
     #df.to_csv("dataset_without_comments.csv", index=False)  
