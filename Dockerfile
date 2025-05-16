@@ -1,6 +1,11 @@
-FROM python:3.12-slim
+FROM --platform=linux/amd64 python:3.12-slim
 
 WORKDIR /app
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
 
 # Install uv
 RUN pip install --no-cache-dir uv==0.1.25
@@ -13,7 +18,8 @@ COPY ai_code_detector/ /app/ai_code_detector/
 COPY models/ /app/models/
 # Install dependencies using uv with system flag
 RUN uv pip install --system -e . && \
-    uv pip install --system torch==2.7.0 --index-url https://download.pytorch.org/whl/cpu
+    uv pip install --system torch==2.7.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip cache purge
 
 
 
@@ -24,11 +30,13 @@ RUN useradd -m appuser && \
 # Switch to non-root user
 USER appuser
 
-# Set Python path to include the app directory
-ENV PYTHONPATH=/app
 
 # Expose the port the app runs on
-EXPOSE 8000
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Command to run the application
-CMD ["uvicorn", "ai_code_detector.api.app:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["uvicorn", "ai_code_detector.api.app:app", "--host", "0.0.0.0", "--port", "8080"] 

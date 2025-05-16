@@ -101,6 +101,6 @@ async def model_info():
 if __name__ == "__main__":
 
     # Run the server with host and port from environment variables or defaults
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8080))
     host = os.environ.get("HOST", "0.0.0.0")
     uvicorn.run("app:app", host=host, port=port, reload=False) 

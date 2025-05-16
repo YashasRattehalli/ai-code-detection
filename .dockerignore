@@ -1,0 +1,26 @@
+# Ignore everything by default
+*
+
+# Allow only specific files and directories needed for the build
+!pyproject.toml
+!uv.lock
+!ai_code_detector/
+!models/
+
+# Exclude unnecessary files from allowed directories
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+**/.git/
+**/.DS_Store
+**/.pytest_cache/
+**/.mypy_cache/
+**/.venv/
+**/*.egg-info/
+**/dist/
+**/build/
+**/.coverage
+**/.env
+**/venv/
+**/env/ 
+**/data/
