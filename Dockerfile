@@ -18,7 +18,6 @@ COPY ai_code_detector/ /app/ai_code_detector/
 COPY models/ /app/models/
 # Install dependencies using uv with system flag
 RUN uv pip install --system -e . && \
-    uv pip install --system torch==2.7.0 --index-url https://download.pytorch.org/whl/cpu && \
     pip cache purge
 
 
