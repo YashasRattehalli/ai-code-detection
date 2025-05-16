@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-detector"
+name = "ai-code-detector"
 version = "0.1.0"
 description = "Code detection project using CoDET-M4 dataset"
 authors = [
@@ -21,7 +21,8 @@ dependencies = [
     "torch>=2.7.0",
     "transformers>=4.51.3",
     "optuna>=4.3.0",
-    "isort>=6.0.1",
+    "uvicorn>=0.34.2",
+    "fastapi>=0.115.12",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,13 @@ dev = [
     "mypy>=0.950",
     "isort>=5.12.0",
 ]
+
+[tool.setuptools]
+packages = ["ai_code_detector"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ai_code_detector"]
+only-packages = true
 
 [tool.pytest]
 testpaths = ["tests"]
@@ -43,3 +51,10 @@ target-version = ["py312"]
 profile = "black"
 line_length = 120
 remove_redundant_aliases = true 
+
+[tool.pylint]
+    [tool.pylint.master]
+    [tool.pylint.messages_control]
+    disable = [
+      "logging-fstring-interpolation"
+    ]

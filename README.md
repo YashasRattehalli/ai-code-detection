@@ -1,124 +1,96 @@
 # AI Code Detector
 
-This project implements a binary classifier that detects AI-generated code using a combination of code embeddings from Microsoft's UnixCoder model and traditional code features.
+A machine learning system for detecting AI-generated code.
 
 ## Overview
 
-The model uses a two-step approach:
-1. Create code embeddings using Microsoft's UnixCoder model
-2. Train an XGBoost binary classifier using these embeddings along with static code features
-
-## Features
-
-- Uses UnixCoder embeddings to capture semantic meaning of code
-- Combines embeddings with traditional code metrics for better accuracy
-- Supports multiple programming languages (Python, Java, C++)
-- Provides a simple CLI for analyzing individual files
-- Config-driven architecture for easy customization
-- Modular design for adding new models in the future
-- Optimized for performance and memory efficiency
+This project provides a complete pipeline for training models to detect AI-generated code and using those models for inference. It uses a combination of code embeddings from Microsoft's UnixCoder model and custom code metrics to achieve high accuracy in distinguishing between human-written and AI-generated code samples.
 
 ## Project Structure
 
+The project has been organized into an object-oriented, modular architecture:
+
 ```
-.
-├── data/                      # Data directory
-│   ├── cache/                 # Cache for embeddings and models
-│   └── dataset_head.csv       # Example dataset
-├── models/                    # Saved model files
-├── src/                       # Source code
-│   ├── models/                # Model implementations
-│   │   ├── __init__.py
-│   │   └── xgboost_model.py   # XGBoost classifier implementation
-│   ├── config.py              # Configuration settings
-│   ├── detect_ai_code.py      # CLI utility for code detection
-│   ├── inference_pipeline.py  # Inference pipeline
-│   └── train_pipeline.py      # Training pipeline
-├── pyproject.toml             # Project dependencies
-└── README.md                  # This file
+ai_code_detector/
+├── __init__.py
+├── config.py                 # Configuration settings
+├── train_pipeline.py         # Training pipeline implementation
+├── inference_pipeline.py     # Inference pipeline implementation
+├── core/
+│   ├── __init__.py
+│   └── code_detector.py      # Base functionality shared by both pipelines
+├── models/
+│   ├── __init__.py
+│   ├── feature_extractor.py  # Code feature extraction
+│   ├── unixcoder.py          # Code embedding generation
+│   └── xgboost_classifier.py # XGBoost model implementation
+└── api/                      # API implementation (if applicable)
 ```
 
-## Requirements
+## Features
 
-- Python 3.8+
-- Dependencies listed in pyproject.toml
-
-## Installation
-
-Clone the repository and install the dependencies:
-
-```bash
-git clone https://github.com/yourusername/ai-code-detector.git
-cd ai-code-detector
-pip install -e .
-```
+- **Code Embedding Generation**: Uses Microsoft's UnixCoder model to create semantic embeddings of code.
+- **Feature Extraction**: Extracts structural and quality metrics from code.
+- **Cross-Validation**: Performs k-fold cross-validation for model evaluation.
+- **Hyperparameter Tuning**: Uses Optuna for finding optimal model parameters.
+- **Language Detection**: Automatically detects programming language from code or file extension.
+- **Multi-Format Output**: Supports JSON and human-readable output formats.
 
 ## Usage
 
 ### Training a Model
 
-Train the model using the provided training pipeline:
+To train a model with default settings:
 
 ```bash
-python src/train_pipeline.py --dataset path/to/dataset.csv [--model-type xgboost] [--load-embeddings] [--tune-params]
+python -m ai_code_detector.train_pipeline
 ```
 
-Options:
-- `--dataset`: Path to the training dataset (required)
-- `--model-type`: Type of model to train (default: xgboost)
-- `--load-embeddings`: Use pre-computed embeddings if available
-- `--tune-params`: Perform hyperparameter tuning
-
-### Detecting AI-Generated Code
-
-Detect AI-generated code using the CLI:
+With custom settings:
 
 ```bash
-python src/detect_ai_code.py -f path/to/file1.py path/to/file2.py [--model xgboost] [--json]
+python -m ai_code_detector.train_pipeline \
+  --dataset path/to/dataset.csv \
+  --model-type xgboost \
+  --tune-params \
+  --n-folds 5
 ```
 
-Or detect from a string:
+### Using the Model for Inference
+
+To analyze one or more files:
 
 ```bash
-python src/detect_ai_code.py -c "def hello(): print('Hello, world!')" -l python
+python -m ai_code_detector.inference_pipeline path/to/file.py
 ```
 
-Or read from standard input:
+With custom settings:
 
 ```bash
-cat file.py | python src/detect_ai_code.py --stdin -l python
+python -m ai_code_detector.inference_pipeline path/to/file.py \
+  --model-type xgboost \
+  --threshold 0.7 \
+  --json
 ```
 
-Options:
-- `-f, --files`: Files to analyze
-- `-c, --code`: Code string to analyze
-- `--stdin`: Read code from stdin
-- `-l, --language`: Programming language of the code
-- `-m, --model`: Model type to use (default: xgboost)
-- `-j, --json`: Output results in JSON format
-- `-t, --threshold`: Probability threshold for classification (default: 0.5)
+## Dependencies
 
-## Extending the Project
+- Python 3.8+
+- PyTorch
+- XGBoost
+- Transformers (Hugging Face)
+- NumPy
+- Pandas
+- scikit-learn
+- Optuna (for hyperparameter tuning)
 
-### Adding a New Model
+## Installation
 
-To add a new model:
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/code-detector.git
+cd code-detector
 
-1. Create a new file in the `src/models/` directory
-2. Implement your model class with the required interface
-3. Update the `MODEL_CONFIGS` dictionary in `src/config.py`
-4. The model should work with the existing pipelines
-
-### Customizing Model Behavior
-
-Modify the configuration in `src/config.py` to customize:
-
-- Model parameters
-- Encoder settings
-- Training parameters
-- File paths
-- Feature columns
-
-## License
-
-[MIT License](LICENSE) 
+# Install dependencies
+pip install -r requirements.txt
+``` 
