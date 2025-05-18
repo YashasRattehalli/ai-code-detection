@@ -595,7 +595,7 @@ def main():
         n_folds=args.n_folds,
         balance_ratio=args.balance_ratio,
         save_embeddings=not args.save_embeddings,
-        load_existing_embeddings=not args.load_embeddings,
+        load_embeddings=not args.load_embeddings,
         test_size=args.test_size
     )
 
