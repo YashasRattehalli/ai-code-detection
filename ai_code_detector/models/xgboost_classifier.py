@@ -248,11 +248,13 @@ class XGBoostClassifier:
         
         Args:
             model_path: Path to save the model
-            feature_importance_path: Deprecated, kept for backward compatibility
             metrics: Optional dictionary with model evaluation metrics to save
         """
         if self.model is None:
             raise ValueError("No model to save")
+        
+        if not model_path:
+            raise ValueError("model_path must be provided and cannot be None or empty")
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(model_path), exist_ok=True)

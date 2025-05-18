@@ -159,9 +159,16 @@ class CodeDetector:
             Array of embeddings
         """
         logger.info(f"Generating embeddings for {len(code_samples)} code samples")
+        
+        # Convert None languages to empty strings to satisfy type requirements
+        processed_languages = None
+        if languages is not None:
+            # Convert None values to empty strings
+            processed_languages = [lang if lang is not None else "" for lang in languages]
+        
         return self.encoder.batch_encode(
             code_samples, 
-            languages, 
+            processed_languages, 
             batch_size=batch_size
         )
     
@@ -275,39 +282,6 @@ class CodeDetector:
         
         return sampled_df
     
-    def load_code_from_files(
-        self, 
-        file_paths: List[str]
-    ) -> Tuple[List[str], List[Optional[str]], List[Dict[str, float]]]:
-        """
-        Load code from multiple files and extract features.
-        
-        Args:
-            file_paths: List of file paths to process
-            
-        Returns:
-            Tuple of (code_samples, languages, features_list)
-        """
-        code_samples = []
-        languages = []
-        
-        for file_path in file_paths:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    code = f.read()
-                    
-                code_samples.append(code)
-                languages.append(FeatureExtractor.detect_language(code))
-                
-            except Exception as e:
-                logger.error(f"Error reading file {file_path}: {e}")
-                # Skip this file
-                continue
-        
-        # Extract features for loaded code
-        features_list = self.extract_features(code_samples)
-        
-        return code_samples, languages, features_list
     
     def predict(
         self, 
@@ -336,8 +310,17 @@ class CodeDetector:
             
         # For UnixCoder models, we can directly use the model's predict method
         if self.model_type == "unixcoder":
-            probabilities = self.classifier.predict(code_samples, languages)
-            return probabilities, languages
+            # Process languages for UnixCoder to handle None values
+            processed_languages = [lang if lang is not None else "" for lang in languages]
+            
+            # Use raw code samples for UnixCoder
+            try:
+                # Directly use the ClassifierAdapter implementation which handles the conversion
+                probabilities = self.classifier.predict(np.array(code_samples), processed_languages)
+                return probabilities, languages
+            except Exception as e:
+                logger.error(f"Error using UnixCoder prediction: {e}")
+                # Fall back to embedding-based approach
             
         # For other models (XGBoost), we need to generate embeddings first
         # Generate embeddings
