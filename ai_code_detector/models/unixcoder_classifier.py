@@ -1,6 +1,8 @@
+import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple, Union
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -288,12 +290,7 @@ class UnixCoderClassifierTrainer:
                     metrics['f1'].append(eval_results['f1'])
                     metrics['auc'].append(eval_results['auc'])
                     
-                    # Save model checkpoint
-                    if save_dir:
-                        step_save_path = os.path.join(save_dir, f"checkpoint-{global_step}")
-                        os.makedirs(step_save_path, exist_ok=True)
-                        self.save_model(step_save_path)
-            
+
             # Epoch-level logging
             avg_epoch_loss = epoch_loss / len(train_loader)
             metrics['train_loss'].append(avg_epoch_loss)
@@ -310,17 +307,16 @@ class UnixCoderClassifierTrainer:
                     f"F1: {eval_results['f1']:.4f}"
                 )
                 
-                # Save final model for this epoch
-                if save_dir:
-                    epoch_save_path = os.path.join(save_dir, f"epoch-{epoch+1}")
-                    os.makedirs(epoch_save_path, exist_ok=True)
-                    self.save_model(epoch_save_path)
         
         # Save final model
         if save_dir:
             final_save_path = os.path.join(save_dir, "final")
             os.makedirs(final_save_path, exist_ok=True)
-            self.save_model(final_save_path)
+            self.save_model(
+                final_save_path,
+                train_metrics=self._extract_latest_metrics(metrics),
+                test_metrics=self.evaluate(eval_dataset, batch_size) if eval_dataset else None
+            )
             
         return metrics
     
@@ -444,32 +440,52 @@ class UnixCoderClassifierTrainer:
         
         return all_preds, all_probs
     
-    def save_model(self, save_path: str):
+    def save_model(self, save_path: str, 
+                   train_metrics: Optional[Dict[str, float]] = None, 
+                   test_metrics: Optional[Dict[str, float]] = None):
         """
-        Save model, tokenizer, and configuration.
+        Save model, tokenizer, configuration, and metrics.
         
         Args:
             save_path: Directory path to save model
+            train_metrics: Optional training metrics dictionary
+            test_metrics: Optional test metrics dictionary
         """
+        # Create directory if it doesn't exist
+        os.makedirs(save_path, exist_ok=True)
+        
         # Save model
-        torch.save(self.model.state_dict(), os.path.join(save_path, "model.pt"))
+        model_path = os.path.join(save_path, "model.pt")
+        logger.info(f"Saving model to {model_path}...")
+        torch.save(self.model.state_dict(), model_path)
         
         # Save tokenizer and model config
         self.tokenizer.save_pretrained(save_path)
         
-        # Save model parameters
-        config = {
+        # Save model parameters and metrics
+        model_info: Dict[str, Any] = {
             "model_type": "unixcoder-classifier",
             "max_length": self.max_length,
-            "language_prefixes": self.lang_prefixes
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Save config as JSON
-        import json
-        with open(os.path.join(save_path, "config.json"), 'w') as f:
-            json.dump(config, f, indent=2)
+        # Add language prefixes if available
+        if self.lang_prefixes:
+            model_info["language_prefixes"] = self.lang_prefixes
         
-        logger.info(f"Model saved to {save_path}")
+        # Add metrics if available
+        if train_metrics is not None:
+            model_info["train_metrics"] = train_metrics
+        
+        if test_metrics is not None:
+            model_info["test_metrics"] = test_metrics
+        
+        # Save model info as JSON
+        info_path = os.path.join(save_path, "model_info.json")
+        with open(info_path, 'w') as f:
+            json.dump(model_info, f, indent=2)
+        
+        logger.info(f"Model and metrics saved to {save_path}")
     
     @classmethod
     def load_model(
@@ -487,10 +503,8 @@ class UnixCoderClassifierTrainer:
         Returns:
             Loaded trainer instance
         """
-        import json
-
         # Load configuration
-        with open(os.path.join(model_path, "config.json"), 'r') as f:
+        with open(os.path.join(model_path, "model_info.json"), 'r') as f:
             config = json.load(f)
         
         # Load tokenizer
@@ -508,8 +522,26 @@ class UnixCoderClassifierTrainer:
             model=model,
             tokenizer=tokenizer,
             device=device,
-            max_length=config.get("max_length", 512),
+            max_length=config.get("max_length", 1024),
             language_prefixes=config.get("language_prefixes", None)
         )
         
         return trainer 
+
+    def _extract_latest_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
+        """
+        Extract the most recent/final values from training metrics.
+        
+        Args:
+            metrics_dict: Dictionary with metrics lists
+            
+        Returns:
+            Dictionary with final metric values
+        """
+        final_metrics = {}
+        for key, value in metrics_dict.items():
+            if isinstance(value, list) and value:
+                final_metrics[key] = value[-1]  # Take the last value
+            else:
+                final_metrics[key] = value
+        return final_metrics 

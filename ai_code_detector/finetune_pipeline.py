@@ -15,9 +15,8 @@ import argparse
 import logging
 import os
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
@@ -68,7 +67,7 @@ class FineTuningPipeline:
         dataset_path: str,
         test_size: float = 0.2,
         val_size: float = 0.1,
-        balance_dataset: bool = True,
+        balance_dataset: bool = False,
         max_samples: Optional[int] = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
@@ -212,7 +211,8 @@ class FineTuningPipeline:
         warmup_steps: int = 0,
         weight_decay: float = 0.01,
         eval_steps: int = 100,
-        run_name: Optional[str] = None
+        run_name: Optional[str] = None,
+        model_dir: Optional[str] = None
     ) -> Tuple[UnixCoderClassifierTrainer, Dict]:
         """
         Fine-tune the UnixCoder classifier model.
@@ -227,15 +227,17 @@ class FineTuningPipeline:
             weight_decay: Weight decay for regularization
             eval_steps: Number of steps between evaluations
             run_name: Optional name for this training run
+            model_dir: Optional path to save the model (overrides automatic directory creation)
             
         Returns:
             Tuple of (trainer, metrics)
         """
-        # Create model output directory
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        run_id = run_name or f"unixcoder-classifier-{timestamp}"
-        model_dir = os.path.join(self.output_dir, run_id)
-        os.makedirs(model_dir, exist_ok=True)
+        # Create model output directory if not provided
+        if not model_dir:
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            run_id = run_name or f"unixcoder-classifier-{timestamp}"
+            model_dir = os.path.join(self.output_dir, run_id)
+            os.makedirs(model_dir, exist_ok=True)
         
         logger.info(f"Fine-tuning model, saving to {model_dir}...")
         
@@ -335,7 +337,6 @@ class FineTuningPipeline:
         # Load and prepare data
         train_df, val_df, test_df = self.load_data(
             dataset_path=dataset_path,
-            balance_dataset=True,
             max_samples=max_samples
         )
         
@@ -346,6 +347,12 @@ class FineTuningPipeline:
             test_df=test_df
         )
         
+        # Create model output directory
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        run_id = run_name or f"unixcoder-classifier-{timestamp}"
+        model_dir = os.path.join(self.output_dir, run_id)
+        os.makedirs(model_dir, exist_ok=True)
+        
         # Fine-tune model
         trainer, train_metrics = self.finetune(
             train_dataset=train_dataset,
@@ -355,7 +362,7 @@ class FineTuningPipeline:
             num_epochs=num_epochs,
             warmup_steps=warmup_steps,
             weight_decay=weight_decay,
-            run_name=run_name
+            model_dir=model_dir
         )
         
         # Evaluate on test set
@@ -365,11 +372,38 @@ class FineTuningPipeline:
             batch_size=batch_size
         )
         
+        # Save metrics to the final model directory using the trainer's save_model method
+        final_model_dir = os.path.join(model_dir, "final")
+        if os.path.exists(final_model_dir):
+            trainer.save_model(
+                final_model_dir, 
+                train_metrics=self._extract_final_metrics(train_metrics) if train_metrics else None, 
+                test_metrics=test_metrics
+            )
+        
         # Log total time
         total_time = time.time() - start_time
         logger.info(f"Pipeline completed in {total_time:.2f} seconds")
         
         return trainer, train_metrics, test_metrics
+
+    def _extract_final_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
+        """
+        Extract the most recent/final values from training metrics.
+        
+        Args:
+            metrics_dict: Dictionary with metrics lists
+            
+        Returns:
+            Dictionary with final metric values
+        """
+        final_metrics = {}
+        for key, value in metrics_dict.items():
+            if isinstance(value, list) and value:
+                final_metrics[key] = value[-1]  # Take the last value
+            else:
+                final_metrics[key] = value
+        return final_metrics
 
 
 def main():
@@ -383,7 +417,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        required=True,
+        default=os.path.join(os.path.dirname(__file__), '..', 'data', 'dataset_head.csv'),
         help="Path to the dataset CSV file"
     )
     
