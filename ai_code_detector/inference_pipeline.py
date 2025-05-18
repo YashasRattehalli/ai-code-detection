@@ -11,7 +11,7 @@ This script handles the prediction pipeline for detecting AI-generated code:
 import argparse
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Import project modules
 from ai_code_detector.config import FEATURE_COLUMNS, FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
@@ -47,7 +47,7 @@ class InferencePipeline(CodeDetector):
         Initialize the inference pipeline.
         
         Args:
-            model_type: Type of model to use ("xgboost" by default)
+            model_type: Type of model to use ("xgboost" or "unixcoder")
             threshold: Probability threshold for binary classification
             model_config: Optional model configuration
             model_path: Path to the model file
@@ -67,9 +67,21 @@ class InferencePipeline(CodeDetector):
         
         # Use provided paths or get from FILE_PATHS
         if model_path is None:
-            model_path = FILE_PATHS["model"]
+            if model_type == "xgboost":
+                model_path = FILE_PATHS["model"]
+            elif model_type == "unixcoder":
+                model_path = FILE_PATHS["unixcoder_model"]
+            else:
+                model_path = FILE_PATHS["model"]
+                
         if importance_path is None:
-            importance_path = FILE_PATHS["feature_importance"]
+            if model_type == "xgboost":
+                importance_path = FILE_PATHS["feature_importance"]
+            elif model_type == "unixcoder":
+                importance_path = FILE_PATHS["unixcoder_importance"]
+            else:
+                importance_path = FILE_PATHS["feature_importance"]
+                
         if feature_columns is None:
             feature_columns = FEATURE_COLUMNS
         
@@ -79,7 +91,8 @@ class InferencePipeline(CodeDetector):
             feature_columns=feature_columns,
             model_path=model_path,
             importance_path=importance_path,
-            load_model=True
+            load_model=True,
+            model_type=model_type
         )
     
     def predict_single(
@@ -93,7 +106,6 @@ class InferencePipeline(CodeDetector):
         Args:
             code: Source code to analyze
             language: Programming language of the code
-            file_path: Path to the source file (optional, for language detection)
             
         Returns:
             Dictionary with prediction results
@@ -107,19 +119,21 @@ class InferencePipeline(CodeDetector):
         features = FeatureExtractor.extract_basic_features(code)
         
         # Get prediction from base class
-        probability = float(self.predict([code], [language], [features])[0])
+        probabilities, detected_languages = super().predict([code], [language] if language else None, [features])
+        probability = float(probabilities[0])
         
         # Format the result
         return {
             'probability': probability,
             'is_ai_generated': probability > self.threshold,
-            'language': language,
+            'language': detected_languages[0],
             'features': features
         }
     
     def predict_batch(
         self,
         code_samples: List[str],
+        languages: Optional[List[str]] = None,
         sample_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -137,9 +151,8 @@ class InferencePipeline(CodeDetector):
             logger.warning("No code samples provided")
             return []
     
-        
         # Get predictions using base class
-        probabilities, languages = self.predict(code_samples)
+        probabilities, detected_languages = super().predict(code_samples, languages)
         
         # Format results
         results = []
@@ -149,11 +162,10 @@ class InferencePipeline(CodeDetector):
                 'id': sample_id,
                 'probability': float(prob),
                 'is_ai_generated': float(prob) > self.threshold,
-                'language': languages[i],
+                'language': detected_languages[i],
             })
         
         return results
-    
 
 
 def main():
@@ -161,6 +173,7 @@ def main():
     parser = argparse.ArgumentParser(description='Detect AI-generated code')
     parser.add_argument('--code', type=str, help='Direct code string to analyze (optional)')
     parser.add_argument('--model-type', type=str, default='xgboost', 
+                        choices=['xgboost', 'unixcoder'],
                         help='Type of model to use for prediction')
     parser.add_argument('--json', action='store_true', 
                         help='Output results in JSON format')
@@ -175,14 +188,13 @@ def main():
         threshold=args.threshold
     )
     
-    
     if args.code:
         # Process single code sample as string
         result = pipeline.predict_single(args.code)
         logger.info(result)
     else:
-        # Noput provided
-        logger.error("No input provided. Use --code or --batch or pipe code through stdin")
+        # No input provided
+        logger.error("No input provided. Use --code or pipe code through stdin")
         parser.print_help()
         sys.exit(1)
 

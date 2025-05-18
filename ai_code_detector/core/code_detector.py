@@ -8,15 +8,15 @@ that is shared between training and inference pipelines.
 import logging
 import os
 import pickle
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from ai_code_detector.models.classifier_adapter import ClassifierAdapter
 from ai_code_detector.models.feature_extractor import FeatureExtractor
-from ai_code_detector.models.unixcoder import UnixCoderEncoder
-from ai_code_detector.models.xgboost_classifier import XGBoostClassifier
+from ai_code_detector.models.unixcoder_embedder import UnixCoderEncoder
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -36,8 +36,8 @@ class CodeDetector:
         feature_columns: Optional[List[str]] = None,
         model_path: Optional[str] = None,
         embeddings_path: Optional[str] = None,
-        importance_path: Optional[str] = None,
-        load_model: bool = False
+        load_model: bool = False,
+        model_type: str = "xgboost"
     ):
         """
         Initialize the code detector with configuration.
@@ -47,14 +47,14 @@ class CodeDetector:
             feature_columns: List of feature column names to use
             model_path: Path to load/save the model
             embeddings_path: Path to load/save embeddings
-            importance_path: Path to load/save feature importance
             load_model: Whether to load the model on initialization
+            model_type: Type of model to use ("xgboost" or "unixcoder")
         """
         self.model_config = model_config or {}
         self.feature_columns = feature_columns or []
         self.model_path = model_path
         self.embeddings_path = embeddings_path
-        self.importance_path = importance_path
+        self.model_type = model_type
         
         # Initialize encoder
         encoder_config = self.model_config.get("encoder", {})
@@ -64,9 +64,10 @@ class CodeDetector:
             language_prefixes=encoder_config.get("language_prefixes", None)
         )
         
-        # Initialize classifier
-        self.classifier = XGBoostClassifier(
-            params=self.model_config.get("params", None),
+        # Initialize classifier adapter
+        self.classifier = ClassifierAdapter(
+            model_type=self.model_type,
+            model_config=self.model_config,
             feature_columns=self.feature_columns
         )
         
@@ -81,11 +82,12 @@ class CodeDetector:
             return
             
         try:
-            self.classifier.load_model(
-                model_path=self.model_path,
-                feature_importance_path=self.importance_path
+            model_info = self.classifier.load_model(
+                model_path=self.model_path
             )
-            logger.info(f"Successfully loaded model from {self.model_path}")
+            logger.info(f"Successfully loaded {self.model_type} model from {self.model_path}")
+            if model_info and 'metrics' in model_info:
+                logger.info(f"Model metrics: {model_info['metrics']}")
         except FileNotFoundError as e:
             logger.warning(f"Could not load model: {str(e)}")
     
@@ -196,7 +198,7 @@ class CodeDetector:
         
         for i, code in enumerate(code_samples):
             file_path = file_paths[i] if file_paths and i < len(file_paths) else None
-            languages.append(FeatureExtractor.detect_language(code, file_path))
+            languages.append(FeatureExtractor.detect_language(code))
             
         return languages
     
@@ -295,7 +297,7 @@ class CodeDetector:
                     code = f.read()
                     
                 code_samples.append(code)
-                languages.append(FeatureExtractor.detect_language(code, file_path))
+                languages.append(FeatureExtractor.detect_language(code))
                 
             except Exception as e:
                 logger.error(f"Error reading file {file_path}: {e}")
@@ -312,7 +314,7 @@ class CodeDetector:
         code_samples: List[str], 
         languages: Optional[List[Optional[str]]] = None,
         features_list: Optional[List[Dict[str, float]]] = None
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, List[Optional[str]]]:
         """
         Make predictions for code samples.
         
@@ -322,7 +324,7 @@ class CodeDetector:
             features_list: Optional list of pre-extracted features
             
         Returns:
-            Array of prediction probabilities
+            Tuple of (prediction_probabilities, detected_languages)
         """
         # Detect languages if not provided
         if languages is None:
@@ -332,6 +334,12 @@ class CodeDetector:
         if features_list is None:
             features_list = self.extract_features(code_samples)
             
+        # For UnixCoder models, we can directly use the model's predict method
+        if self.model_type == "unixcoder":
+            probabilities = self.classifier.predict(code_samples, languages)
+            return probabilities, languages
+            
+        # For other models (XGBoost), we need to generate embeddings first
         # Generate embeddings
         batch_size = self.model_config.get("encoder", {}).get("batch_size", 16)
         embeddings = self.generate_embeddings(code_samples, languages, batch_size)
@@ -339,5 +347,7 @@ class CodeDetector:
         # Prepare feature matrix
         X = self.prepare_features_matrix(embeddings, features_list)
         
-        # Make predictions
-        return self.classifier.predict(X), languages
+        # Make predictions with the classifier
+        probabilities = self.classifier.predict(X)
+        
+        return probabilities, languages

@@ -32,13 +32,16 @@ class XGBoostClassifier:
     to detect AI-generated code.
     """
     
-    def __init__(self, params: Optional[Dict[str, Any]] = None, feature_columns: Optional[List[str]] = None):
+    def __init__(self, params: Optional[Dict[str, Any]] = None, 
+                 feature_columns: Optional[List[str]] = None, 
+                 use_features: bool = False):
         """
         Initialize the classifier with optional parameters.
         
         Args:
             params: XGBoost parameters dictionary
             feature_columns: List of feature column names
+            use_features: Whether to use additional features alongside embeddings
         """
         self.params = params or {
             'objective': 'binary:logistic',
@@ -61,6 +64,7 @@ class XGBoostClassifier:
             self.params['base_score'] = 0.5
             
         self.feature_columns = feature_columns
+        self.use_features = use_features
         self.model: Optional[xgb.Booster] = None
         self.feature_importance: Optional[Dict[str, float]] = None
         
@@ -78,18 +82,18 @@ class XGBoostClassifier:
         """
         # Check if required columns exist
         required_columns = ['embedding']
-        if self.feature_columns:
+        if self.feature_columns and self.use_features:
             required_columns.extend(self.feature_columns)
             
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
             
-        # Combine embeddings with other features
+        # Get embeddings
         X_embeddings = np.stack(df['embedding'].values)
         
-        # If we have additional features, include them
-        if self.feature_columns:
+        # If we have additional features and use_features is True, include them
+        if self.feature_columns and self.use_features:
             X_features = df[self.feature_columns].values
             X = np.hstack((X_embeddings, X_features))
         else:
@@ -175,7 +179,13 @@ class XGBoostClassifier:
                 # Normalize to get relative importance - handle empty dictionary
                 if importance_scores:
                     # Convert all values to float and calculate total
-                    float_scores = {k: float(v) for k, v in importance_scores.items()}
+                    float_scores = {}
+                    for k, v in importance_scores.items():
+                        if isinstance(v, (list, tuple)):
+                            float_scores[k] = float(v[0]) if v else 0.0
+                        else:
+                            float_scores[k] = float(v)
+                    
                     total_importance = sum(float_scores.values())
                     
                     # Create normalized dictionary
@@ -232,13 +242,14 @@ class XGBoostClassifier:
         # Make predictions
         return cast(xgb.Booster, self.model).predict(dmatrix)
     
-    def save_model(self, model_path: str, feature_importance_path: Optional[str] = None) -> None:
+    def save_model(self, model_path: str, metrics: Optional[Dict[str, float]] = None) -> None:
         """
-        Save the trained model to a file.
+        Save the trained model to a file along with parameters and metrics.
         
         Args:
             model_path: Path to save the model
-            feature_importance_path: Path to save feature importance
+            feature_importance_path: Deprecated, kept for backward compatibility
+            metrics: Optional dictionary with model evaluation metrics to save
         """
         if self.model is None:
             raise ValueError("No model to save")
@@ -249,21 +260,31 @@ class XGBoostClassifier:
         logger.info(f"Saving model to {model_path}...")
         cast(xgb.Booster, self.model).save_model(model_path)
         
-        # Save feature importance if available
-        if self.feature_importance:
-            if feature_importance_path is None:
-                feature_importance_path = f"{os.path.splitext(model_path)[0]}_importance.json"
-                
-            with open(feature_importance_path, 'w') as f:
-                json.dump(self.feature_importance, f, indent=2)
+        # Save model parameters and metrics
+        model_info_path = f"{os.path.splitext(model_path)[0]}_info.json"
+        model_info = {
+            'parameters': self.params
+        }
+        
+        # Add metrics if available
+        if metrics:
+            model_info['metrics'] = metrics
+        
+        with open(model_info_path, 'w') as f:
+            json.dump(model_info, f, indent=2)
+        
+        logger.info(f"Model parameters and metrics saved to {model_info_path}")
     
-    def load_model(self, model_path: str, feature_importance_path: Optional[str] = None) -> None:
+    def load_model(self, model_path: str) -> Dict[str, Any]:
         """
         Load a model from a file.
         
         Args:
             model_path: Path to the model file
-            feature_importance_path: Path to the feature importance file
+            feature_importance_path: Deprecated, kept for backward compatibility
+            
+        Returns:
+            Dictionary with model info (parameters and metrics) if available
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file {model_path} not found")
@@ -272,10 +293,18 @@ class XGBoostClassifier:
         self.model = xgb.Booster()
         cast(xgb.Booster, self.model).load_model(model_path)
         
-        # Try to load feature importance if available
-        if feature_importance_path is None:
-            feature_importance_path = f"{os.path.splitext(model_path)[0]}_importance.json"
+        # Try to load model info if available
+        model_info_path = f"{os.path.splitext(model_path)[0]}_info.json"
+        model_info = {}
+        
+        if os.path.exists(model_info_path):
+            with open(model_info_path, 'r') as f:
+                model_info = json.load(f)
+                
+            # Update parameters if available
+            if 'parameters' in model_info:
+                self.params = model_info['parameters']
+                
+            logger.info(f"Loaded model info from {model_info_path}")
             
-        if os.path.exists(feature_importance_path):
-            with open(feature_importance_path, 'r') as f:
-                self.feature_importance = json.load(f)
+        return model_info

@@ -51,7 +51,7 @@ class DataLoader:
         Args:
             feature_columns: List of feature column names
         """
-        self.feature_columns = feature_columns or FEATURE_COLUMNS
+        self.feature_columns = feature_columns
     
     def sample_balanced_dataset(
         self,
@@ -96,7 +96,7 @@ class DataLoader:
     def load_dataset(
         self,
         dataset_path: str,
-        balance_dataset: bool = True,
+        balance_dataset: bool = False,
         total_samples: int = 10000
     ) -> pd.DataFrame:
         """
@@ -147,8 +147,9 @@ class DataLoader:
         df['features'] = df['features'].apply(parse_features)
         
         # Extract individual features
-        for feature in self.feature_columns:
-            df[feature] = df['features'].apply(lambda x: x.get(feature, 0))
+        if self.feature_columns is not None:
+            for feature in self.feature_columns:
+                df[feature] = df['features'].apply(lambda x: x.get(feature, 0))
         
         elapsed_time = time.time() - start_time
         logger.info(f"Dataset loading completed in {elapsed_time:.2f} seconds")
@@ -170,8 +171,7 @@ class TrainingPipeline(CodeDetector):
         model_config: Optional[Dict[str, Any]] = None,
         feature_columns: Optional[List[str]] = None,
         model_path: Optional[str] = None,
-        embeddings_path: Optional[str] = None,
-        importance_path: Optional[str] = None
+        embeddings_path: Optional[str] = None
     ):
         """
         Initialize the training pipeline.
@@ -182,7 +182,6 @@ class TrainingPipeline(CodeDetector):
             feature_columns: List of feature column names
             model_path: Path to save the trained model
             embeddings_path: Path to save/load embeddings
-            importance_path: Path to save feature importance
         """
         # Get configurations
         self.model_type = model_type
@@ -199,18 +198,14 @@ class TrainingPipeline(CodeDetector):
             model_path = FILE_PATHS["model"]
         if embeddings_path is None:
             embeddings_path = FILE_PATHS["embeddings"]
-        if importance_path is None:
-            importance_path = FILE_PATHS["feature_importance"]
-        if feature_columns is None:
-            feature_columns = FEATURE_COLUMNS
+
         
         # Initialize base class
         super().__init__(
             model_config=model_config,
             feature_columns=feature_columns,
             model_path=model_path,
-            embeddings_path=embeddings_path,
-            importance_path=importance_path
+            embeddings_path=embeddings_path
         )
         
         # Initialize data loader
@@ -476,10 +471,10 @@ class TrainingPipeline(CodeDetector):
             early_stopping_rounds=None  # No early stopping for final model
         )
         
-        # Save the model
+        # Save the model with metrics
         self.classifier.save_model(
             model_path=self.model_path,
-            feature_importance_path=self.importance_path
+            metrics=metrics
         )
         
         logger.info(f"Final model saved to {self.model_path}")
@@ -489,7 +484,6 @@ class TrainingPipeline(CodeDetector):
     def train(
         self,
         dataset_path: str,
-        load_embeddings: bool = True,
         tune_params: bool = True,
         n_folds: int = 5,
         balance_ratio: float = 0
@@ -499,7 +493,6 @@ class TrainingPipeline(CodeDetector):
         
         Args:
             dataset_path: Path to the dataset CSV file
-            load_embeddings: Whether to load pre-computed embeddings
             tune_params: Whether to perform hyperparameter tuning
             n_folds: Number of folds for cross-validation
             balance_ratio: Maximum ratio between classes (0 = no balancing)
@@ -548,7 +541,6 @@ def main():
                         default=os.path.join(os.path.dirname(__file__), '..', 'data', 'dataset.csv'), 
                         help='Path to the dataset CSV file')
     parser.add_argument('--model-type', type=str, default='xgboost', help='Type of model to train')
-    parser.add_argument('--load-embeddings', action='store_true', help='Load pre-computed embeddings if available')
     parser.add_argument('--tune-params', action='store_true', help='Perform hyperparameter tuning')
     parser.add_argument('--balance-ratio', type=float, default=0, 
                         help='Maximum ratio between classes (0 = no balancing, 5 = at most 5:1 ratio)')
@@ -565,7 +557,6 @@ def main():
     # Run the training pipeline
     pipeline.train(
         dataset_path=args.dataset,
-        load_embeddings=args.load_embeddings,
         tune_params=args.tune_params,
         n_folds=args.n_folds,
         balance_ratio=args.balance_ratio

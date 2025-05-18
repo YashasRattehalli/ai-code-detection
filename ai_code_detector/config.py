@@ -70,6 +70,41 @@ MODEL_CONFIGS = {
             "n_iter": 25,
             "cv": 3
         }
+    },
+    "unixcoder": {
+        # Encoder settings
+        "encoder": {
+            "model_name": "microsoft/unixcoder-base",
+            "max_length": 512,
+            "batch_size": 16,
+            "language_prefixes": {
+                "python": "<python> ",
+                "java": "<java> ",
+                "cpp": "<cpp> ",
+                "javascript": "<javascript> ",
+                "go": "<go> ",
+                "ruby": "<ruby> ",
+                "php": "<php> "
+            }
+        },
+        
+        # Model parameters
+        "params": {
+            "model_name": "microsoft/unixcoder-base",
+            "num_classes": 2,
+            "dropout_rate": 0.1
+        },
+        
+        # Training settings
+        "training": {
+            "batch_size": 16,
+            "learning_rate": 5e-5,
+            "num_epochs": 3,
+            "warmup_steps": 0,
+            "weight_decay": 0.01,
+            "eval_steps": 100,
+            "validation_split": 0.2
+        }
     }
 }
 
@@ -77,7 +112,9 @@ MODEL_CONFIGS = {
 FILE_PATHS = {
     "embeddings": os.path.join(DATA_DIR, "code_embeddings.pkl"),
     "model": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
-    "feature_importance": os.path.join(MODELS_DIR, "xgboost_importance.json")
+    "model_info": os.path.join(MODELS_DIR, "xgboost_model_info.json"),
+    "unixcoder_model": os.path.join(MODELS_DIR, "unixcoder_model"),
+    "unixcoder_info": os.path.join(MODELS_DIR, "unixcoder_model_info.json")
 }
 
 # Feature columns used in the model
