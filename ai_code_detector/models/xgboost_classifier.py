@@ -34,7 +34,7 @@ class XGBoostClassifier:
     
     def __init__(self, params: Optional[Dict[str, Any]] = None, 
                  feature_columns: Optional[List[str]] = None, 
-                 use_features: bool = False):
+                 use_features: bool = True):
         """
         Initialize the classifier with optional parameters.
         
@@ -63,7 +63,7 @@ class XGBoostClassifier:
         if 'base_score' not in self.params:
             self.params['base_score'] = 0.5
             
-        self.feature_columns = feature_columns
+        self.feature_columns = feature_columns or []
         self.use_features = use_features
         self.model: Optional[xgb.Booster] = None
         self.feature_importance: Optional[Dict[str, float]] = None
@@ -81,19 +81,18 @@ class XGBoostClassifier:
             y: Target labels
         """
         # Check if required columns exist
-        required_columns = ['embedding']
-        if self.feature_columns and self.use_features:
-            required_columns.extend(self.feature_columns)
-            
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
+        if 'embedding' not in df.columns:
+            raise ValueError("Missing required 'embedding' column in dataframe")
             
         # Get embeddings
         X_embeddings = np.stack(df['embedding'].values)
         
         # If we have additional features and use_features is True, include them
         if self.feature_columns and self.use_features:
+            missing_columns = [col for col in self.feature_columns if col not in df.columns]
+            if missing_columns:
+                raise ValueError(f"Missing feature columns: {missing_columns}")
+                
             X_features = df[self.feature_columns].values
             X = np.hstack((X_embeddings, X_features))
         else:
@@ -137,7 +136,7 @@ class XGBoostClassifier:
     def train(self, X_train: np.ndarray, y_train: np.ndarray, 
               X_val: np.ndarray, y_val: np.ndarray,
               num_boost_round: int = 2000,
-              early_stopping_rounds: int = 20) -> Dict[str, float]:
+              early_stopping_rounds: Optional[int] = 20) -> Dict[str, float]:
         """
         Train the XGBoost model.
         
@@ -147,7 +146,7 @@ class XGBoostClassifier:
             X_val: Validation features
             y_val: Validation labels
             num_boost_round: Number of boosting rounds
-            early_stopping_rounds: Number of rounds for early stopping
+            early_stopping_rounds: Number of rounds for early stopping, None to disable
             
         Returns:
             Dictionary with evaluation metrics
@@ -156,10 +155,10 @@ class XGBoostClassifier:
         dtrain = xgb.DMatrix(X_train, label=y_train)
         dval = xgb.DMatrix(X_val, label=y_val)
         
-        # Set up watchlist for early stopping
+        # Set up watchlist for monitoring
         watchlist = [(dtrain, 'train'), (dval, 'val')]
         
-        # Train model with early stopping
+        # Train model with optional early stopping
         logger.info("Training XGBoost model...")
         self.model = xgb.train(
             self.params,
@@ -216,10 +215,6 @@ class XGBoostClassifier:
         
         # Calculate comprehensive metrics
         metrics = self.evaluate_model(y_val, y_pred, y_pred_proba)
-        
-        # Display confusion matrix
-        cm = confusion_matrix(y_val, y_pred)
-        logger.info(f"Confusion matrix:\n{cm}")
         
         return metrics
     

@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import optuna
-import pandas as pd
-import xgboost as xgb
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+import pandas as pd  # type: ignore
+import xgboost as xgb  # type: ignore
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split  # type: ignore
 
 # Import project modules
 from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
@@ -199,31 +199,31 @@ class TrainingPipeline(CodeDetector):
             total_samples=total_samples
         )
         
-        # Step 2: Generate or load embeddings
-        if load_embeddings:
-            # Try to load cached embeddings
+        # Step 2: Try to load cached embeddings if requested
+        embeddings_array = None
+        if load_embeddings and self.embeddings_path:
             embeddings_array = self.load_embeddings()
             if embeddings_array is not None and len(embeddings_array) == len(df):
                 logger.info(f"Using {len(embeddings_array)} cached embeddings")
                 df['embedding'] = list(embeddings_array)
                 return df
             else:
-                logger.info("Cached embeddings not available or size mismatch. Generating new embeddings.")
+                logger.info("Cached embeddings not available or size mismatch")
         
-        # Step 3: Generate new embeddings
-        logger.info(f"Generating embeddings for {len(df)} code samples...")
-        batch_size = self.model_config.get("encoder", {}).get("batch_size", 16)
-        embeddings_array = self.generate_embeddings(
-            code_samples=df['code'].tolist(),
-            languages=df['language'].tolist(),
-            batch_size=batch_size
+        else:
+            # Step 3: Generate new embeddings
+            logger.info(f"Generating embeddings for {len(df)} code samples...")
+            batch_size = self.model_config.get("encoder", {}).get("batch_size", 16)
+            embeddings_array = self.generate_embeddings(
+                code_samples=df['code'].tolist(),
+                languages=df['language'].tolist(),
+                batch_size=batch_size
         )
         
         # Step 4: Save embeddings if requested
-        if save_embeddings:
-            success = self.save_embeddings(embeddings_array)
-            if success:
-                logger.info(f"Saved {len(embeddings_array)} embeddings to cache")
+        if save_embeddings and self.embeddings_path:
+            self.save_embeddings(embeddings_array)
+            logger.info(f"Saved {len(embeddings_array)} embeddings to {self.embeddings_path}")
         
         # Step 5: Add embeddings to dataframe
         df['embedding'] = list(embeddings_array)
@@ -403,38 +403,42 @@ class TrainingPipeline(CodeDetector):
     
     def train_final_model(
         self,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        test_size: float = 0.1
     ) -> Dict[str, float]:
         """
-        Train the final model on all data.
+        Train the final model using train/test split.
         
         Args:
             df: DataFrame with processed data
+            test_size: Proportion of data to use for validation
             
         Returns:
             Dictionary with model metrics
         """
-        logger.info("Training final model on all data...")
+        logger.info(f"Training final model with {test_size:.0%} test split...")
         
-        # Prepare features
+        # Prepare features using the classifier
         X, y = self.classifier.prepare_features(df)
         
-        # Create a small validation subset (not used for early stopping, just for metrics)
-        validation_size = min(100, len(X) // 10)  # 10% or 100 samples, whichever is smaller
-        X_val = X[:validation_size]
-        y_val = y[:validation_size]
+        # Create a train/test split with stratification
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=test_size, random_state=42, stratify=y
+        )
+        
+        logger.info(f"Training on {X_train.shape[0]} samples, validating on {X_val.shape[0]} samples")
         
         # Get training configuration
         training_config = self.model_config.get("training", {})
         
-        # Train the model on all data (no early stopping)
+        # Train the model
         metrics = self.classifier.train(
-            X_train=X,
-            y_train=y,
+            X_train=X_train,
+            y_train=y_train,
             X_val=X_val,
             y_val=y_val,
             num_boost_round=training_config.get("num_boost_round", 2000),
-            early_stopping_rounds=None  # No early stopping for final model
+            early_stopping_rounds=training_config.get("early_stopping_rounds", 50)
         )
         
         # Save the model
@@ -449,6 +453,43 @@ class TrainingPipeline(CodeDetector):
         
         return metrics
     
+    def sample_balanced_dataset(self, df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
+        """
+        Create a balanced sample from the dataset.
+        
+        Args:
+            df: DataFrame to sample from
+            total_samples: Total number of samples to include
+            
+        Returns:
+            Balanced DataFrame
+        """
+        # Get counts by class
+        class_counts = df['target_binary'].value_counts()
+        logger.info(f"Original class distribution: {class_counts.to_dict()}")
+        
+        # Calculate samples per class
+        samples_per_class = total_samples // len(class_counts)
+        
+        # Sample each class
+        sampled_dfs = []
+        for class_value, count in class_counts.items():
+            class_df = df[df['target_binary'] == class_value]
+            if len(class_df) > samples_per_class:
+                sampled_df = class_df.sample(samples_per_class, random_state=42)
+            else:
+                sampled_df = class_df  # Take all samples if fewer than needed
+            sampled_dfs.append(sampled_df)
+        
+        # Combine and shuffle
+        balanced_df = pd.concat(sampled_dfs).sample(frac=1, random_state=42)
+        
+        # Log new distribution
+        new_counts = balanced_df['target_binary'].value_counts()
+        logger.info(f"Balanced class distribution: {new_counts.to_dict()}")
+        
+        return balanced_df
+    
     def train(
         self,
         dataset_path: str,
@@ -456,7 +497,8 @@ class TrainingPipeline(CodeDetector):
         n_folds: int = 5,
         balance_ratio: float = 0,
         save_embeddings: bool = True,
-        load_existing_embeddings: bool = True
+        load_embeddings: bool = True,
+        test_size: float = 0.1
     ) -> Dict[str, Any]:
         """
         Run the complete training pipeline.
@@ -467,7 +509,8 @@ class TrainingPipeline(CodeDetector):
             n_folds: Number of folds for cross-validation
             balance_ratio: Maximum ratio between classes (0 = no balancing)
             save_embeddings: Whether to save generated embeddings
-            load_existing_embeddings: Whether to try loading cached embeddings
+            load_embeddings: Whether to try loading cached embeddings
+            test_size: Proportion of data to use for final validation
             
         Returns:
             Dictionary with training results and metrics
@@ -483,7 +526,7 @@ class TrainingPipeline(CodeDetector):
         df = self.process_dataset(
             dataset_path=dataset_path,
             save_embeddings=save_embeddings,
-            load_embeddings=load_existing_embeddings,
+            load_embeddings=load_embeddings,
             balance_dataset=False
         )
         
@@ -495,9 +538,9 @@ class TrainingPipeline(CodeDetector):
             n_folds=n_folds
         )
         
-        # Step 3: Train final model on all data
-        logger.info("Training final model on all data...")
-        final_metrics = self.train_final_model(df)
+        # Step 3: Train final model on all data with test/val split
+        logger.info("Training final model...")
+        final_metrics = self.train_final_model(df, test_size=test_size)
         
         # Summarize results
         total_time = time.time() - start_time
@@ -532,12 +575,14 @@ def main():
                         help='Number of folds for cross-validation')
     parser.add_argument('--balance-ratio', type=float, default=0, 
                         help='Maximum ratio between classes (0=no balancing)')
+    parser.add_argument('--test-size', type=float, default=0.1,
+                        help='Proportion of data to use for final validation (default: 10%)')
     
     # Embedding options
-    parser.add_argument('--no-save-embeddings', action='store_true',
-                        help='Do not save embeddings to cache')
-    parser.add_argument('--ignore-cached-embeddings', action='store_true',
-                        help='Ignore cached embeddings and regenerate')
+    parser.add_argument('--save-embeddings', action='store_true',
+                        help='Save embeddings to cache')
+    parser.add_argument('--load-embeddings', action='store_true',
+                        help='Load embeddings from cache')
     
     args = parser.parse_args()
     
@@ -549,8 +594,9 @@ def main():
         tune_params=args.tune_params,
         n_folds=args.n_folds,
         balance_ratio=args.balance_ratio,
-        save_embeddings=not args.no_save_embeddings,
-        load_existing_embeddings=not args.ignore_cached_embeddings
+        save_embeddings=not args.save_embeddings,
+        load_existing_embeddings=not args.load_embeddings,
+        test_size=args.test_size
     )
 
 if __name__ == "__main__":

@@ -183,6 +183,7 @@ class UnixCoderClassifierTrainer:
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.lang_prefixes = language_prefixes
+        self.loss_fn = nn.CrossEntropyLoss()
     
     def train(
         self,
@@ -229,18 +230,10 @@ class UnixCoderClassifierTrainer:
             num_training_steps=total_steps
         )
         
-        # Loss function
-        loss_fn = nn.CrossEntropyLoss()
-        
         # Tracking metrics
-        metrics = {
-            'train_loss': [],
-            'eval_loss': [],
-            'accuracy': [],
-            'precision': [],
-            'recall': [],
-            'f1': [],
-            'auc': []
+        metrics: Dict[str, List[float]] = {
+            'train_loss': [], 'eval_loss': [], 'accuracy': [],
+            'precision': [], 'recall': [], 'f1': [], 'auc': []
         }
         
         # Training loop
@@ -260,7 +253,7 @@ class UnixCoderClassifierTrainer:
                 # Forward pass
                 optimizer.zero_grad()
                 logits = self.model(input_ids, attention_mask)
-                loss = loss_fn(logits, labels)
+                loss = self.loss_fn(logits, labels)
                 
                 # Backward pass
                 loss.backward()
@@ -270,7 +263,7 @@ class UnixCoderClassifierTrainer:
                 epoch_loss += loss.item()
                 global_step += 1
                 
-                # Evaluation
+                # Evaluation during training
                 if eval_dataset and global_step % eval_steps == 0:
                     eval_results = self.evaluate(eval_dataset, batch_size)
                     
@@ -283,13 +276,9 @@ class UnixCoderClassifierTrainer:
                     )
                     
                     # Save metrics
-                    metrics['eval_loss'].append(eval_results['loss'])
-                    metrics['accuracy'].append(eval_results['accuracy'])
-                    metrics['precision'].append(eval_results['precision'])
-                    metrics['recall'].append(eval_results['recall'])
-                    metrics['f1'].append(eval_results['f1'])
-                    metrics['auc'].append(eval_results['auc'])
-                    
+                    for key in eval_results:
+                        if key in metrics:
+                            metrics[key].append(eval_results[key])
 
             # Epoch-level logging
             avg_epoch_loss = epoch_loss / len(train_loader)
@@ -306,7 +295,6 @@ class UnixCoderClassifierTrainer:
                     f"Accuracy: {eval_results['accuracy']:.4f} | "
                     f"F1: {eval_results['f1']:.4f}"
                 )
-                
         
         # Save final model
         if save_dir:
@@ -319,6 +307,19 @@ class UnixCoderClassifierTrainer:
             )
             
         return metrics
+    
+    def _process_batch(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Process a batch for inference or evaluation."""
+        input_ids = batch['input_ids'].to(self.device)
+        attention_mask = batch['attention_mask'].to(self.device)
+        labels = batch.get('labels', None)
+        if labels is not None:
+            labels = labels.to(self.device)
+        
+        # Get model predictions
+        logits = self.model(input_ids, attention_mask)
+        
+        return logits, labels
     
     def evaluate(
         self, 
@@ -336,25 +337,21 @@ class UnixCoderClassifierTrainer:
             Dictionary with evaluation metrics
         """
         eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
-        loss_fn = nn.CrossEntropyLoss()
         
         self.model.eval()
-        all_preds = []
-        all_labels = []
-        all_probs = []
+        all_preds: List[int] = []
+        all_labels: List[int] = []
+        all_probs: List[float] = []
         total_loss = 0
         
         with torch.no_grad():
             for batch in eval_loader:
-                # Move batch to device
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
-                labels = batch['labels'].to(self.device)
+                logits, labels = self._process_batch(batch)
                 
-                # Forward pass
-                logits = self.model(input_ids, attention_mask)
-                loss = loss_fn(logits, labels)
-                total_loss += loss.item()
+                # Calculate loss if labels are available
+                if labels is not None:
+                    loss = self.loss_fn(logits, labels)
+                    total_loss += loss.item()
                 
                 # Get predictions
                 probs = torch.softmax(logits, dim=1)
@@ -362,29 +359,29 @@ class UnixCoderClassifierTrainer:
                 
                 # Collect results
                 all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
+                if labels is not None:
+                    all_labels.extend(labels.cpu().numpy())
                 all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of class 1 (AI)
         
         # Calculate metrics
-        accuracy = accuracy_score(all_labels, all_preds)
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            all_labels, all_preds, average='binary', zero_division=0
-        )
+        metrics = {'loss': total_loss / len(eval_loader)}
         
-        # Calculate AUC if possible (requires both classes to be present)
-        try:
-            auc = roc_auc_score(all_labels, all_probs)
-        except ValueError:
-            auc = 0.0
+        if all_labels:
+            metrics['accuracy'] = accuracy_score(all_labels, all_preds)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                all_labels, all_preds, average='binary', zero_division=0
+            )
+            metrics['precision'] = precision
+            metrics['recall'] = recall
+            metrics['f1'] = f1
+            
+            # Calculate AUC if possible (requires both classes to be present)
+            try:
+                metrics['auc'] = roc_auc_score(all_labels, all_probs)
+            except ValueError:
+                metrics['auc'] = 0.0
         
-        return {
-            'loss': total_loss / len(eval_loader),
-            'accuracy': accuracy,
-            'precision': precision,
-            'recall': recall,
-            'f1': f1,
-            'auc': auc
-        }
+        return metrics
     
     def predict(
         self, 
@@ -418,17 +415,12 @@ class UnixCoderClassifierTrainer:
         
         # Make predictions
         self.model.eval()
-        all_preds = []
-        all_probs = []
+        all_preds: List[int] = []
+        all_probs: List[float] = []
         
         with torch.no_grad():
             for batch in data_loader:
-                # Move batch to device
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
-                
-                # Forward pass
-                logits = self.model(input_ids, attention_mask)
+                logits, _ = self._process_batch(batch)
                 
                 # Get predictions
                 probs = torch.softmax(logits, dim=1)
@@ -440,9 +432,12 @@ class UnixCoderClassifierTrainer:
         
         return all_preds, all_probs
     
-    def save_model(self, save_path: str, 
-                   train_metrics: Optional[Dict[str, float]] = None, 
-                   test_metrics: Optional[Dict[str, float]] = None):
+    def save_model(
+        self, 
+        save_path: str, 
+        train_metrics: Optional[Dict[str, float]] = None, 
+        test_metrics: Optional[Dict[str, float]] = None
+    ) -> None:
         """
         Save model, tokenizer, configuration, and metrics.
         
@@ -466,19 +461,11 @@ class UnixCoderClassifierTrainer:
         model_info: Dict[str, Any] = {
             "model_type": "unixcoder-classifier",
             "max_length": self.max_length,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "language_prefixes": self.lang_prefixes,
+            "train_metrics": train_metrics,
+            "test_metrics": test_metrics
         }
-        
-        # Add language prefixes if available
-        if self.lang_prefixes:
-            model_info["language_prefixes"] = self.lang_prefixes
-        
-        # Add metrics if available
-        if train_metrics is not None:
-            model_info["train_metrics"] = train_metrics
-        
-        if test_metrics is not None:
-            model_info["test_metrics"] = test_metrics
         
         # Save model info as JSON
         info_path = os.path.join(save_path, "model_info.json")
