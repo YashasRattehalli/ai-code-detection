@@ -11,10 +11,10 @@ This script handles the prediction pipeline for detecting AI-generated code:
 import argparse
 import logging
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # Import project modules
-from ai_code_detector.config import FEATURE_COLUMNS, FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
+from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
 from ai_code_detector.core import CodeDetector
 from ai_code_detector.models.feature_extractor import FeatureExtractor
 
@@ -39,9 +39,7 @@ class InferencePipeline(CodeDetector):
         model_type: str = "xgboost",
         threshold: float = 0.5,
         model_config: Optional[Dict[str, Any]] = None,
-        model_path: Optional[str] = None,
-        importance_path: Optional[str] = None,
-        feature_columns: Optional[List[str]] = None
+        model_path: Optional[str] = None
     ):
         """
         Initialize the inference pipeline.
@@ -51,8 +49,6 @@ class InferencePipeline(CodeDetector):
             threshold: Probability threshold for binary classification
             model_config: Optional model configuration
             model_path: Path to the model file
-            importance_path: Path to the feature importance file
-            feature_columns: List of feature column names
         """
         # Get configurations
         self.model_type = model_type
@@ -68,29 +64,17 @@ class InferencePipeline(CodeDetector):
         # Use provided paths or get from FILE_PATHS
         if model_path is None:
             if model_type == "xgboost":
-                model_path = FILE_PATHS["model"]
+                model_path = FILE_PATHS["xgboost_model"]
             elif model_type == "unixcoder":
                 model_path = FILE_PATHS["unixcoder_model"]
             else:
-                model_path = FILE_PATHS["model"]
+                raise ValueError(f"Unsupported model type: {model_type}. "
+                                 f"Available options: {list(MODEL_CONFIGS.keys())}")
                 
-        if importance_path is None:
-            if model_type == "xgboost":
-                importance_path = FILE_PATHS["feature_importance"]
-            elif model_type == "unixcoder":
-                importance_path = FILE_PATHS["unixcoder_importance"]
-            else:
-                importance_path = FILE_PATHS["feature_importance"]
-                
-        if feature_columns is None:
-            feature_columns = FEATURE_COLUMNS
-        
-        # Initialize base class
+
         super().__init__(
             model_config=model_config,
-            feature_columns=feature_columns,
             model_path=model_path,
-            importance_path=importance_path,
             load_model=True,
             model_type=model_type
         )
@@ -115,19 +99,17 @@ class InferencePipeline(CodeDetector):
             language = FeatureExtractor.detect_language(code)
             logger.info(f"Detected language: {language}")
         
-        # Extract features
-        features = FeatureExtractor.extract_basic_features(code)
+
         
         # Get prediction from base class
-        probabilities, detected_languages = super().predict([code], [language] if language else None, [features])
+        probabilities, detected_languages = super().predict([code], [language] if language else None)
         probability = float(probabilities[0])
         
         # Format the result
         return {
             'probability': probability,
             'is_ai_generated': probability > self.threshold,
-            'language': detected_languages[0],
-            'features': features
+            'language': detected_languages[0]
         }
     
     def predict_batch(

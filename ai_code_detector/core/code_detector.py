@@ -188,55 +188,21 @@ class CodeDetector:
     
     def detect_languages(
         self, 
-        code_samples: List[str], 
-        file_paths: Optional[List[str]] = None
+        code_samples: List[str],
     ) -> List[Optional[str]]:
         """
         Detect programming languages for code samples.
         
         Args:
             code_samples: List of code samples
-            file_paths: Optional list of file paths
             
         Returns:
             List of detected languages
         """
-        languages = []
         
-        for i, code in enumerate(code_samples):
-            file_path = file_paths[i] if file_paths and i < len(file_paths) else None
-            languages.append(FeatureExtractor.detect_language(code))
-            
-        return languages
+        return [FeatureExtractor.detect_language(code) for code in code_samples]
+
     
-    def prepare_features_matrix(
-        self, 
-        embeddings: np.ndarray, 
-        features_list: List[Dict[str, float]]
-    ) -> np.ndarray:
-        """
-        Prepare the feature matrix by combining embeddings and extracted features.
-        
-        Args:
-            embeddings: Array of code embeddings
-            features_list: List of feature dictionaries
-            
-        Returns:
-            Combined feature matrix
-        """
-        if len(embeddings) != len(features_list):
-            raise ValueError("Number of embeddings and feature dictionaries must match")
-            
-        # Extract feature values in the correct order
-        if self.feature_columns:
-            feature_matrix = np.array([
-                [features.get(f, 0.0) for f in self.feature_columns] 
-                for features in features_list
-            ])
-            # Combine embeddings and features
-            return np.hstack((embeddings, feature_matrix))
-        else:
-            return embeddings
     
     def sample_balanced_dataset(
         self, 
@@ -287,7 +253,6 @@ class CodeDetector:
         self, 
         code_samples: List[str], 
         languages: Optional[List[Optional[str]]] = None,
-        features_list: Optional[List[Dict[str, float]]] = None
     ) -> Tuple[np.ndarray, List[Optional[str]]]:
         """
         Make predictions for code samples.
@@ -303,10 +268,7 @@ class CodeDetector:
         # Detect languages if not provided
         if languages is None:
             languages = self.detect_languages(code_samples)
-            
-        # Extract features if not provided
-        if features_list is None:
-            features_list = self.extract_features(code_samples)
+        
             
         # For UnixCoder models, we can directly use the model's predict method
         if self.model_type == "unixcoder":
@@ -327,10 +289,8 @@ class CodeDetector:
         batch_size = self.model_config.get("encoder", {}).get("batch_size", 16)
         embeddings = self.generate_embeddings(code_samples, languages, batch_size)
         
-        # Prepare feature matrix
-        X = self.prepare_features_matrix(embeddings, features_list)
-        
         # Make predictions with the classifier
-        probabilities = self.classifier.predict(X)
+        probabilities = self.classifier.predict(embeddings)
         
         return probabilities, languages
+    

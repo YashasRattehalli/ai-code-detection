@@ -111,10 +111,10 @@ MODEL_CONFIGS = {
 # File paths
 FILE_PATHS = {
     "embeddings": os.path.join(DATA_DIR, "code_embeddings.pkl"),
-    "model": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
-    "model_info": os.path.join(MODELS_DIR, "xgboost_model_info.json"),
+    "xgboost_model": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
+    "xgboost_model_info": os.path.join(MODELS_DIR, "xgboost_model_info.json"),
     "unixcoder_model": os.path.join(MODELS_DIR, "unixcoder_model"),
-    "unixcoder_info": os.path.join(MODELS_DIR, "unixcoder_model_info.json")
+    "unixcoder_model_info": os.path.join(MODELS_DIR, "unixcoder_model_info.json")
 }
 
 # Feature columns used in the model
