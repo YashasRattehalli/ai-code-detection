@@ -79,16 +79,22 @@ async def xgboost_model_info():
     Get information about the model.
     
     Returns:
-        Dictionary with model metadata
+        Dictionary with model metadata and metrics
     """
-    # Try to load feature importance
+    # Try to load model info including metrics
     try:
         with open(FILE_PATHS["xgboost_model_info"], 'r') as f:
             model_info = json.load(f)
     except Exception:
         model_info = None
     
-    return model_info
+    return {
+        "model_type": "XGBoost",
+        "feature_columns": FEATURE_COLUMNS,
+        "model_info": model_info,
+        "encoder": MODEL_CONFIGS["xgboost"]["encoder"]["model_name"],
+        "max_sequence_length": MODEL_CONFIGS["xgboost"]["encoder"]["max_length"]
+    }
 
 if __name__ == "__main__":
 

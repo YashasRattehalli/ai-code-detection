@@ -216,9 +216,13 @@ class UnixCoderClassifierTrainer:
         """
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         
-        # Prepare optimizer and scheduler
+        # Freeze encoder parameters
+        for param in self.model.encoder.parameters():
+            param.requires_grad = False
+            
+        # Only train classifier parameters
         optimizer = AdamW(
-            self.model.parameters(),
+            self.model.classifier.parameters(),
             lr=learning_rate,
             weight_decay=weight_decay
         )
