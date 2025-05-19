@@ -1,0 +1,27 @@
+{
+  "parameters": {
+    "objective": "binary:logistic",
+    "eval_metric": [
+      "logloss",
+      "auc"
+    ],
+    "max_depth": 7,
+    "learning_rate": 0.1851561046543922,
+    "subsample": 0.6353970008207678,
+    "colsample_bytree": 0.6783931449676581,
+    "min_child_weight": 1,
+    "tree_method": "hist",
+    "predictor": "auto",
+    "n_jobs": -1,
+    "random_state": 42,
+    "scale_pos_weight": 0.9301321323053058,
+    "base_score": 0.5
+  },
+  "metrics": {
+    "accuracy": 0.9401470353204411,
+    "precision": 0.9518688577412598,
+    "recall": 0.92918927419989,
+    "f1": 0.9403923441168278,
+    "auc": 0.9853728286770276
+  }
+}

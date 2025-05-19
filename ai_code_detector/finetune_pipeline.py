@@ -6,6 +6,7 @@ This script provides a complete pipeline for fine-tuning the UnixCoder
 model for detecting AI-generated code.
 """
 
+
 import argparse
 import logging
 import os
@@ -18,6 +19,9 @@ from transformers import AutoTokenizer
 
 from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG
 from ai_code_detector.models.unixcoder_classifier import CodeDataset, UnixCoderClassifier, UnixCoderClassifierTrainer
+
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Set up logging
 logging.basicConfig(

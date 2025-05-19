@@ -33,7 +33,7 @@ class UnixCoderEncoder:
             language_prefixes: Dictionary mapping language names to prefix tokens
             cache_dir: Optional directory to cache the downloaded model
         """
-        self.device = torch.device("mps" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
         
         # Load tokenizer and model with cache directory if provided
