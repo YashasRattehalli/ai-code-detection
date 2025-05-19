@@ -260,7 +260,6 @@ class CodeDetector:
         Args:
             code_samples: List of code samples
             languages: Optional list of languages
-            features_list: Optional list of pre-extracted features
             
         Returns:
             Tuple of (prediction_probabilities, detected_languages)
@@ -269,13 +268,12 @@ class CodeDetector:
         if languages is None:
             languages = self.detect_languages(code_samples)
         
-            
         # For UnixCoder models, we can directly use the model's predict method
         if self.model_type == "unixcoder":
             # Process languages for UnixCoder to handle None values
             processed_languages = [lang if lang is not None else "" for lang in languages]
             
-            # Use raw code samples for UnixCoder
+            # Use UnixCoder trainer for prediction
             try:
                 # Directly use the ClassifierAdapter implementation which handles the conversion
                 probabilities = self.classifier.predict(np.array(code_samples), processed_languages)

@@ -154,7 +154,7 @@ def main():
     """Main function to run the inference pipeline."""
     parser = argparse.ArgumentParser(description='Detect AI-generated code')
     parser.add_argument('--code', type=str, help='Direct code string to analyze (optional)')
-    parser.add_argument('--model-type', type=str, default='xgboost', 
+    parser.add_argument('--model-type', type=str, default='unixcoder', 
                         choices=['xgboost', 'unixcoder'],
                         help='Type of model to use for prediction')
     parser.add_argument('--json', action='store_true', 

@@ -20,7 +20,6 @@ from transformers import AutoTokenizer
 from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG
 from ai_code_detector.models.unixcoder_classifier import CodeDataset, UnixCoderClassifier, UnixCoderClassifierTrainer
 
-import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Set up logging
@@ -166,8 +165,8 @@ class FineTuningPipeline:
         start_time = time.time()
         
         # Create model output directory
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        run_id = run_name or f"unixcoder-classifier-{timestamp}"
+
+        run_id = run_name or "unixcoder-classifier"
         model_dir = os.path.join(self.output_dir, run_id)
         os.makedirs(model_dir, exist_ok=True)
         

@@ -302,10 +302,9 @@ class UnixCoderClassifierTrainer:
         
         # Save final model
         if save_dir:
-            final_save_path = os.path.join(save_dir, "final")
-            os.makedirs(final_save_path, exist_ok=True)
+            os.makedirs(save_dir, exist_ok=True)
             self.save_model(
-                final_save_path,
+                save_dir,
                 train_metrics=self._extract_latest_metrics(metrics),
                 test_metrics=self.evaluate(eval_dataset, batch_size) if eval_dataset else None
             )

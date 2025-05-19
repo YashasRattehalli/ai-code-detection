@@ -113,21 +113,9 @@ FILE_PATHS = {
     "embeddings": os.path.join(DATA_DIR, "code_embeddings.pkl"),
     "xgboost_model": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
     "xgboost_model_info": os.path.join(MODELS_DIR, "xgboost_model_info.json"),
-    "unixcoder_model": os.path.join(MODELS_DIR, "unixcoder_model"),
-    "unixcoder_model_info": os.path.join(MODELS_DIR, "unixcoder_model_info.json")
+    "unixcoder_model": os.path.join(MODELS_DIR, "unixcoder_classifier")
 }
 
-# Feature columns used in the model
-FEATURE_COLUMNS = [
-    'avgFunctionLength', 
-    'avgIdentifierLength', 
-    'avgLineLength', 
-    'emptyLinesDensity', 
-    'functionDefinitionDensity', 
-    'maintainabilityIndex', 
-    'maxDecisionTokens', 
-    'whiteSpaceRatio'
-]
 
 # Logging configuration
 LOGGING_CONFIG = {
