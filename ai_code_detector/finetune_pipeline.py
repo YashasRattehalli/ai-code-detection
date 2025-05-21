@@ -116,7 +116,7 @@ class FineTuningPipeline:
         logger.info(f"Split sizes - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
         return train_df, val_df, test_df
     
-    def load_embeddings(self, embeddings_path: Optional[str] = None) -> Optional[List]:
+    def load_embeddings(self, embeddings_path: Optional[str] = None) -> Optional[List[np.ndarray]]:
         """
         Load pre-computed embeddings from a file.
         
@@ -129,12 +129,19 @@ class FineTuningPipeline:
         if not embeddings_path:
             embeddings_path = FILE_PATHS.get("embeddings")
             
+        if not embeddings_path:
+            logger.warning("No embeddings path provided or found in FILE_PATHS")
+            return None
+            
         try:
             if os.path.exists(embeddings_path):
                 logger.info(f"Loading pre-computed embeddings from {embeddings_path}")
                 with open(embeddings_path, 'rb') as f:
                     embeddings = pickle.load(f)
-                    return list(embeddings)[:100]
+                    # Return full embeddings in production, not just first 100
+                    return list(embeddings)
+            else:
+                logger.warning(f"Embeddings file not found at {embeddings_path}")
         except Exception as e:
             logger.warning(f"Error loading embeddings: {str(e)}")
             
@@ -148,6 +155,10 @@ class FineTuningPipeline:
     ) -> Tuple[CodeDataset, CodeDataset, CodeDataset]:
         """Create PyTorch datasets from DataFrames."""
         logger.info("Creating PyTorch datasets...")
+        
+        # Verify embeddings exist
+        if 'embedding' not in train_df.columns or train_df['embedding'].isnull().any():
+            raise ValueError("Embeddings are missing in the training dataframe")
         
         # Create datasets
         train_dataset = CodeDataset(
@@ -165,6 +176,7 @@ class FineTuningPipeline:
             labels=test_df['label'].tolist()
         )
         
+        logger.info(f"Created datasets - Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
         return train_dataset, val_dataset, test_dataset
     
     def run_pipeline(
@@ -183,7 +195,6 @@ class FineTuningPipeline:
         start_time = time.time()
         
         # Create model output directory
-
         run_id = run_name or "unixcoder-classifier"
         model_dir = os.path.join(self.output_dir, run_id)
         os.makedirs(model_dir, exist_ok=True)
@@ -195,6 +206,14 @@ class FineTuningPipeline:
             balance=balance_dataset
         )
         
+        # Check if embeddings are loaded
+        if 'embedding' not in train_df.columns or train_df['embedding'].isnull().any():
+            raise ValueError("Embeddings are required for this model but are missing in the dataset")
+        
+        # Get embedding dimension from first sample
+        embedding_dim = train_df['embedding'].iloc[0].shape[0]
+        logger.info(f"Using embeddings with dimension: {embedding_dim}")
+        
         # 2. Create datasets
         train_dataset, val_dataset, test_dataset = self.create_datasets(
             train_df=train_df,
@@ -204,7 +223,7 @@ class FineTuningPipeline:
         
         # 3. Initialize model and trainer
         model = UnixCoderClassifier(
-            embedding_dim=train_df['embedding'][0].shape[0],
+            embedding_dim=embedding_dim,
             num_classes=2,
             dropout_rate=0.1
         )

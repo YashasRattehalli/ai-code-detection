@@ -263,9 +263,18 @@ class UnixCoderClassifierTrainer:
         model_path = os.path.join(save_path, "model.pt")
         logger.info(f"Saving model to {model_path}...")
         torch.save(self.model.state_dict(), model_path)
+        
+        # Save model configuration
+        model_config = {
+            "embedding_dim": self.model.classifier[1].in_features,
+            "num_classes": self.model.classifier[-1].out_features,
+            "dropout_rate": self.model.classifier[0].p
+        }
+        
         model_info: Dict[str, Any] = {
             "model_type": "unixcoder-classifier",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "model_config": model_config,
             "train_metrics": train_metrics,
             "test_metrics": test_metrics
         }
@@ -277,16 +286,35 @@ class UnixCoderClassifierTrainer:
     def load_model(
         cls,
         model_path: str,
-        embedding_dim: int,
+        embedding_dim: Optional[int] = None,
         device: Optional[torch.device] = None
     ) -> 'UnixCoderClassifierTrainer':
+        # Load model config
         with open(os.path.join(model_path, "model_info.json"), 'r') as f:
-            config = json.load(f)
-        model = UnixCoderClassifier(embedding_dim=embedding_dim)
+            model_info = json.load(f)
+        
+        # Use saved config if available, otherwise use provided parameters
+        model_config = model_info.get("model_config", {})
+        embedding_dim = model_config.get("embedding_dim", embedding_dim)
+        num_classes = model_config.get("num_classes", 2)
+        dropout_rate = model_config.get("dropout_rate", 0.1)
+        
+        if embedding_dim is None:
+            raise ValueError("embedding_dim must be provided either in model_info.json or as a parameter")
+        
+        # Initialize model with configuration
+        model = UnixCoderClassifier(
+            embedding_dim=embedding_dim,
+            num_classes=num_classes,
+            dropout_rate=dropout_rate
+        )
+        
+        # Load the model weights
         model.load_state_dict(torch.load(
             os.path.join(model_path, "model.pt"),
             map_location=device if device else torch.device("cpu")
         ))
+        
         trainer = cls(
             model=model,
             device=device
