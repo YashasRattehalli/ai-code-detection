@@ -10,9 +10,11 @@ model for detecting AI-generated code.
 import argparse
 import logging
 import os
+import pickle
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
@@ -74,6 +76,8 @@ class FineTuningPipeline:
         class_counts = df['label'].value_counts()
         logger.info(f"Class distribution: {class_counts.to_dict()}")
         
+        if self.model_name == "microsoft/unixcoder-base":
+            df["embedding"] = self.load_embeddings(FILE_PATHS.get("embeddings"))
         # Balance the dataset if requested
         if balance:
             class_0 = df[df['label'] == 0]
@@ -112,6 +116,30 @@ class FineTuningPipeline:
         logger.info(f"Split sizes - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
         return train_df, val_df, test_df
     
+    def load_embeddings(self, embeddings_path: Optional[str] = None) -> Optional[List]:
+        """
+        Load pre-computed embeddings from a file.
+        
+        Args:
+            embeddings_path: Path to the embeddings file
+            
+        Returns:
+            Array of embeddings or None if loading fails
+        """
+        if not embeddings_path:
+            embeddings_path = FILE_PATHS.get("embeddings")
+            
+        try:
+            if os.path.exists(embeddings_path):
+                logger.info(f"Loading pre-computed embeddings from {embeddings_path}")
+                with open(embeddings_path, 'rb') as f:
+                    embeddings = pickle.load(f)
+                    return list(embeddings)[:100]
+        except Exception as e:
+            logger.warning(f"Error loading embeddings: {str(e)}")
+            
+        return None
+    
     def create_datasets(
         self,
         train_df: pd.DataFrame,
@@ -123,27 +151,18 @@ class FineTuningPipeline:
         
         # Create datasets
         train_dataset = CodeDataset(
-            code_samples=train_df['code'].tolist(),
-            labels=train_df['label'].tolist(),
-            tokenizer=self.tokenizer,
-            max_length=self.max_length,
-            languages=train_df['language'].tolist()
+            embeddings=train_df['embedding'].tolist(),
+            labels=train_df['label'].tolist()
         )
         
         val_dataset = CodeDataset(
-            code_samples=val_df['code'].tolist(),
-            labels=val_df['label'].tolist(),
-            tokenizer=self.tokenizer,
-            max_length=self.max_length,
-            languages=val_df['language'].tolist()
+            embeddings=val_df['embedding'].tolist(),
+            labels=val_df['label'].tolist()
         )
         
         test_dataset = CodeDataset(
-            code_samples=test_df['code'].tolist(),
-            labels=test_df['label'].tolist(),
-            tokenizer=self.tokenizer,
-            max_length=self.max_length,
-            languages=test_df['language'].tolist()
+            embeddings=test_df['embedding'].tolist(),
+            labels=test_df['label'].tolist()
         )
         
         return train_dataset, val_dataset, test_dataset
@@ -154,7 +173,6 @@ class FineTuningPipeline:
         batch_size: int = 16,
         learning_rate: float = 2e-5,
         num_epochs: int = 3,
-        warmup_steps: int = 0,
         weight_decay: float = 0.01,
         max_samples: Optional[int] = None,
         run_name: Optional[str] = None,
@@ -186,16 +204,13 @@ class FineTuningPipeline:
         
         # 3. Initialize model and trainer
         model = UnixCoderClassifier(
-            model_name=self.model_name,
+            embedding_dim=train_df['embedding'][0].shape[0],
             num_classes=2,
-            dropout_rate=0.1,
-            cache_dir=self.cache_dir
+            dropout_rate=0.1
         )
         
         trainer = UnixCoderClassifierTrainer(
-            model=model,
-            tokenizer=self.tokenizer,
-            max_length=self.max_length
+            model=model
         )
         
         # 4. Fine-tune model
@@ -206,7 +221,6 @@ class FineTuningPipeline:
             batch_size=batch_size,
             learning_rate=learning_rate,
             num_epochs=num_epochs,
-            warmup_steps=warmup_steps,
             weight_decay=weight_decay,
             save_dir=model_dir
         )
@@ -336,7 +350,6 @@ def main():
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         num_epochs=args.num_epochs,
-        warmup_steps=args.warmup_steps,
         weight_decay=args.weight_decay,
         max_samples=args.max_samples,
         run_name=args.run_name,

@@ -4,12 +4,12 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warmup
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -20,67 +20,30 @@ class CodeDataset(Dataset):
     """
     def __init__(
         self,
-        code_samples: List[str],
+        embeddings: List[np.ndarray],
         labels: Optional[List[int]] = None,
-        tokenizer = None,
-        max_length: int = 1024,
-        languages: Optional[List[str]] = None,
-        language_prefixes: Optional[Dict[str, str]] = None
+        max_length: int = 1024
     ):
         """
         Initialize dataset with code samples and labels.
         
         Args:
-            code_samples: List of source code samples
+            embeddings: List of precomputed embeddings
             labels: Optional list of labels (1 for AI, 0 for human)
-            tokenizer: Tokenizer to use for encoding
             max_length: Maximum sequence length
-            languages: Optional list of programming languages
-            language_prefixes: Dictionary mapping language names to prefix tokens
         """
-        self.code_samples = code_samples
+        self.embeddings = embeddings
         self.labels = labels
-        self.tokenizer = tokenizer
         self.max_length = max_length
-        self.languages = languages
-        
-        # Default language prefixes if none provided
-        self.lang_prefixes = language_prefixes or {
-            "python": "<python> ",
-            "java": "<java> ",
-            "cpp": "<cpp> ",
-            "javascript": "<javascript> ",
-            "go": "<go> ",
-            "ruby": "<ruby> ",
-            "php": "<php> "
-        }
+
         
     def __len__(self):
-        return len(self.code_samples)
+        return len(self.embeddings)
     
     def __getitem__(self, idx):
-        code = self.code_samples[idx]
-        
-        # Apply language prefix if available
-        if self.languages and idx < len(self.languages):
-            lang = self.languages[idx].lower()
-            if lang in self.lang_prefixes:
-                code = f"{self.lang_prefixes[lang]}{code}"
-        
-        # Tokenize code
-        encoded = self.tokenizer(
-            code,
-            truncation=True,
-            max_length=self.max_length,
-            padding="max_length",
-            return_tensors="pt"
-        )
-        
         item = {
-            'input_ids': encoded['input_ids'].squeeze(),
-            'attention_mask': encoded['attention_mask'].squeeze(),
+            "embedding": self.embeddings[idx]
         }
-        
         # Add label if available
         if self.labels is not None:
             item['labels'] = torch.tensor(self.labels[idx], dtype=torch.long)
@@ -90,99 +53,61 @@ class CodeDataset(Dataset):
 
 class UnixCoderClassifier(nn.Module):
     """
-    Classifier model that uses UnixCoder as the base encoder with a classification head.
+    Classifier model that takes precomputed embeddings as input with a classification head.
     """
     def __init__(
         self,
-        model_name: str = "microsoft/unixcoder-base",
+        embedding_dim: int,
         num_classes: int = 2,
-        dropout_rate: float = 0.1,
-        cache_dir: Optional[str] = None
+        dropout_rate: float = 0.1
     ):
         """
         Initialize the classifier model.
-        
         Args:
-            model_name: Name or path of the UnixCoder model
+            embedding_dim: Dimension of the input embeddings
             num_classes: Number of output classes (2 for binary classification)
             dropout_rate: Dropout probability for regularization
-            cache_dir: Optional directory to cache the downloaded model
         """
         super(UnixCoderClassifier, self).__init__()
-        
-        # Load base UnixCoder model
-        self.encoder = AutoModel.from_pretrained(model_name, cache_dir=cache_dir)
-        
-        # Get the embedding dimension from the model config
-        hidden_size = self.encoder.config.hidden_size
-        
-        # Classification head
         self.classifier = nn.Sequential(
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_size, hidden_size // 2),
+            nn.Linear(embedding_dim, embedding_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_size // 2, num_classes)
+            nn.Linear(embedding_dim // 2, num_classes)
         )
     
-    def forward(
-        self, 
-        input_ids: torch.Tensor, 
-        attention_mask: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the model.
-        
         Args:
-            input_ids: Token IDs from tokenizer
-            attention_mask: Attention mask from tokenizer
-            
+            embedding: Precomputed embedding tensor (batch_size, embedding_dim)
         Returns:
             Logits for each class
         """
-        # Get UnixCoder embeddings
-        outputs = self.encoder(input_ids, attention_mask=attention_mask)
-        
-        # Use CLS token embedding (first token) as code representation
-        cls_output = outputs.last_hidden_state[:, 0, :]
-        
-        # Pass through classification head
-        logits = self.classifier(cls_output)
-        
+        logits = self.classifier(embedding)
         return logits
 
 
 class UnixCoderClassifierTrainer:
     """
-    Trainer class for fine-tuning and evaluating the UnixCoder classifier.
+    Trainer class for training and evaluating the classifier on precomputed embeddings.
     """
     def __init__(
         self,
         model: UnixCoderClassifier,
-        tokenizer,
-        device: Optional[torch.device] = None,
-        max_length: int = 1024,
-        language_prefixes: Optional[Dict[str, str]] = None
+        device: Optional[torch.device] = None
     ):
         """
         Initialize the trainer.
-        
         Args:
             model: UnixCoderClassifier model
-            tokenizer: Tokenizer for encoding inputs
             device: Device to use for training (cpu or gpu)
-            max_length: Maximum sequence length
-            language_prefixes: Dictionary mapping language names to prefix tokens
         """
-        # Set device
         self.device = device if device is not None else \
             torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
-        
         self.model = model.to(self.device)
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.lang_prefixes = language_prefixes
         self.loss_fn = nn.CrossEntropyLoss()
     
     def train(
@@ -192,105 +117,60 @@ class UnixCoderClassifierTrainer:
         batch_size: int = 16,
         learning_rate: float = 5e-5,
         num_epochs: int = 3,
-        warmup_steps: int = 0,
         weight_decay: float = 0.01,
         eval_steps: int = 100,
         save_dir: Optional[str] = None
     ) -> Dict[str, List[float]]:
         """
         Train the model.
-        
         Args:
             train_dataset: Dataset for training
             eval_dataset: Optional dataset for evaluation
             batch_size: Batch size for training
             learning_rate: Learning rate for optimizer
             num_epochs: Number of training epochs
-            warmup_steps: Warmup steps for learning rate scheduler
             weight_decay: Weight decay for regularization
             eval_steps: Number of steps between evaluations
             save_dir: Directory to save model checkpoints
-            
         Returns:
             Dictionary containing training metrics
         """
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        
-        # Freeze encoder parameters
-        for param in self.model.encoder.parameters():
-            param.requires_grad = False
-            
-        # Only train classifier parameters
-        optimizer = AdamW(
-            self.model.classifier.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay
-        )
-        
+        optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         total_steps = len(train_loader) * num_epochs
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=total_steps
-        )
-        
-        # Tracking metrics
         metrics: Dict[str, List[float]] = {
             'train_loss': [], 'eval_loss': [], 'accuracy': [],
             'precision': [], 'recall': [], 'f1': [], 'auc': []
         }
-        
-        # Training loop
         logger.info(f"Starting training for {num_epochs} epochs...")
         global_step = 0
-        
         for epoch in range(num_epochs):
             self.model.train()
             epoch_loss = 0
-            
             for batch in train_loader:
-                # Move batch to device
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
+                embeddings = batch['embedding'].to(self.device)
                 labels = batch['labels'].to(self.device)
-                
-                # Forward pass
                 optimizer.zero_grad()
-                logits = self.model(input_ids, attention_mask)
+                logits = self.model(embeddings)
                 loss = self.loss_fn(logits, labels)
-                
-                # Backward pass
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
-                
                 epoch_loss += loss.item()
                 global_step += 1
-                
-                # Evaluation during training
                 if eval_dataset and global_step % eval_steps == 0:
                     eval_results = self.evaluate(eval_dataset, batch_size)
-                    
-                    # Log evaluation results
                     logger.info(
                         f"Step {global_step} | "
                         f"Eval Loss: {eval_results['loss']:.4f} | "
                         f"Accuracy: {eval_results['accuracy']:.4f} | "
                         f"F1: {eval_results['f1']:.4f}"
                     )
-                    
-                    # Save metrics
                     for key in eval_results:
                         if key in metrics:
                             metrics[key].append(eval_results[key])
-
-            # Epoch-level logging
             avg_epoch_loss = epoch_loss / len(train_loader)
             metrics['train_loss'].append(avg_epoch_loss)
-            
             logger.info(f"Epoch {epoch+1}/{num_epochs} | Train Loss: {avg_epoch_loss:.4f}")
-            
-            # Final evaluation for this epoch
             if eval_dataset:
                 eval_results = self.evaluate(eval_dataset, batch_size)
                 logger.info(
@@ -299,8 +179,6 @@ class UnixCoderClassifierTrainer:
                     f"Accuracy: {eval_results['accuracy']:.4f} | "
                     f"F1: {eval_results['f1']:.4f}"
                 )
-        
-        # Save final model
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             self.save_model(
@@ -308,67 +186,38 @@ class UnixCoderClassifierTrainer:
                 train_metrics=self._extract_latest_metrics(metrics),
                 test_metrics=self.evaluate(eval_dataset, batch_size) if eval_dataset else None
             )
-            
         return metrics
-    
     def _process_batch(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Process a batch for inference or evaluation."""
-        input_ids = batch['input_ids'].to(self.device)
-        attention_mask = batch['attention_mask'].to(self.device)
+        embeddings = batch['embedding'].to(self.device)
         labels = batch.get('labels', None)
         if labels is not None:
             labels = labels.to(self.device)
-        
-        # Get model predictions
-        logits = self.model(input_ids, attention_mask)
-        
+        logits = self.model(embeddings)
         return logits, labels
-    
     def evaluate(
         self, 
         eval_dataset: CodeDataset, 
         batch_size: int = 16
     ) -> Dict[str, float]:
-        """
-        Evaluate the model on a dataset.
-        
-        Args:
-            eval_dataset: Dataset for evaluation
-            batch_size: Batch size for evaluation
-            
-        Returns:
-            Dictionary with evaluation metrics
-        """
         eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
-        
         self.model.eval()
         all_preds: List[int] = []
         all_labels: List[int] = []
         all_probs: List[float] = []
         total_loss = 0
-        
         with torch.no_grad():
             for batch in eval_loader:
                 logits, labels = self._process_batch(batch)
-                
-                # Calculate loss if labels are available
                 if labels is not None:
                     loss = self.loss_fn(logits, labels)
                     total_loss += loss.item()
-                
-                # Get predictions
                 probs = torch.softmax(logits, dim=1)
                 preds = torch.argmax(logits, dim=1)
-                
-                # Collect results
                 all_preds.extend(preds.cpu().numpy())
                 if labels is not None:
                     all_labels.extend(labels.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of class 1 (AI)
-        
-        # Calculate metrics
+                all_probs.extend(probs[:, 1].cpu().numpy())
         metrics = {'loss': total_loss / len(eval_loader)}
-        
         if all_labels:
             metrics['accuracy'] = accuracy_score(all_labels, all_preds)
             precision, recall, f1, _ = precision_recall_fscore_support(
@@ -377,161 +226,77 @@ class UnixCoderClassifierTrainer:
             metrics['precision'] = precision
             metrics['recall'] = recall
             metrics['f1'] = f1
-            
-            # Calculate AUC if possible (requires both classes to be present)
             try:
                 metrics['auc'] = roc_auc_score(all_labels, all_probs)
             except ValueError:
                 metrics['auc'] = 0.0
-        
         return metrics
     
     def predict(
         self, 
-        code_samples: List[str], 
-        languages: Optional[List[str]] = None,
+        embeddings: List[np.ndarray],
         batch_size: int = 16
     ) -> Tuple[List[int], List[float]]:
-        """
-        Predict on new code samples.
-        
-        Args:
-            code_samples: List of source code samples
-            languages: Optional list of programming languages
-            batch_size: Batch size for prediction
-            
-        Returns:
-            Tuple of (predictions, probabilities)
-        """
-        # Create dataset
         dataset = CodeDataset(
-            code_samples=code_samples,
-            labels=None,
-            tokenizer=self.tokenizer,
-            max_length=self.max_length,
-            languages=languages,
-            language_prefixes=self.lang_prefixes
+            embeddings=embeddings,
+            labels=None
         )
-        
-        # Create dataloader
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-        
-        # Make predictions
         self.model.eval()
         all_preds: List[int] = []
         all_probs: List[float] = []
-        
         with torch.no_grad():
             for batch in data_loader:
                 logits, _ = self._process_batch(batch)
-                
-                # Get predictions
                 probs = torch.softmax(logits, dim=1)
                 preds = torch.argmax(logits, dim=1)
-                
-                # Collect results
                 all_preds.extend(preds.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of class 1 (AI)
-        
+                all_probs.extend(probs[:, 1].cpu().numpy())
         return all_preds, all_probs
-    
     def save_model(
         self, 
         save_path: str, 
         train_metrics: Optional[Dict[str, float]] = None, 
         test_metrics: Optional[Dict[str, float]] = None
     ) -> None:
-        """
-        Save model, tokenizer, configuration, and metrics.
-        
-        Args:
-            save_path: Directory path to save model
-            train_metrics: Optional training metrics dictionary
-            test_metrics: Optional test metrics dictionary
-        """
-        # Create directory if it doesn't exist
         os.makedirs(save_path, exist_ok=True)
-        
-        # Save model
         model_path = os.path.join(save_path, "model.pt")
         logger.info(f"Saving model to {model_path}...")
         torch.save(self.model.state_dict(), model_path)
-        
-        # Save tokenizer and model config
-        self.tokenizer.save_pretrained(save_path)
-        
-        # Save model parameters and metrics
         model_info: Dict[str, Any] = {
             "model_type": "unixcoder-classifier",
-            "max_length": self.max_length,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "language_prefixes": self.lang_prefixes,
             "train_metrics": train_metrics,
             "test_metrics": test_metrics
         }
-        
-        # Save model info as JSON
         info_path = os.path.join(save_path, "model_info.json")
         with open(info_path, 'w') as f:
             json.dump(model_info, f, indent=2)
-        
         logger.info(f"Model and metrics saved to {save_path}")
-    
     @classmethod
     def load_model(
         cls,
         model_path: str,
+        embedding_dim: int,
         device: Optional[torch.device] = None
     ) -> 'UnixCoderClassifierTrainer':
-        """
-        Load a saved model.
-        
-        Args:
-            model_path: Path to saved model
-            device: Device to load model onto
-            
-        Returns:
-            Loaded trainer instance
-        """
-        # Load configuration
         with open(os.path.join(model_path, "model_info.json"), 'r') as f:
             config = json.load(f)
-        
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        
-        # Initialize model
-        model = UnixCoderClassifier()
+        model = UnixCoderClassifier(embedding_dim=embedding_dim)
         model.load_state_dict(torch.load(
             os.path.join(model_path, "model.pt"),
             map_location=device if device else torch.device("cpu")
         ))
-        
-        # Create trainer
         trainer = cls(
             model=model,
-            tokenizer=tokenizer,
-            device=device,
-            max_length=config.get("max_length", 1024),
-            language_prefixes=config.get("language_prefixes", None)
+            device=device
         )
-        
-        return trainer 
-
+        return trainer
     def _extract_latest_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
-        """
-        Extract the most recent/final values from training metrics.
-        
-        Args:
-            metrics_dict: Dictionary with metrics lists
-            
-        Returns:
-            Dictionary with final metric values
-        """
         final_metrics = {}
         for key, value in metrics_dict.items():
             if isinstance(value, list) and value:
-                final_metrics[key] = value[-1]  # Take the last value
+                final_metrics[key] = value[-1]
             else:
                 final_metrics[key] = value
         return final_metrics 

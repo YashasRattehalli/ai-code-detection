@@ -12,7 +12,6 @@ import pandas as pd  # type: ignore
 import xgboost as xgb  # type: ignore
 from sklearn.metrics import (  # type: ignore
     accuracy_score,
-    confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
@@ -68,7 +67,8 @@ class XGBoostClassifier:
         self.model: Optional[xgb.Booster] = None
         self.feature_importance: Optional[Dict[str, float]] = None
         
-    def prepare_features(self, df: pd.DataFrame, target_column: str = 'target_binary') -> Tuple[np.ndarray, np.ndarray]:
+    def prepare_features(self, df: pd.DataFrame, 
+                         target_column: str = 'target_binary') -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare features for model training/prediction.
         
