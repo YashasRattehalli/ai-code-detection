@@ -4,104 +4,31 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 
+from ai_code_detector.models.embedding_classifier import EmbeddingClassifier
+
 # Set up logging
 logger = logging.getLogger(__name__)
-
-class CodeDataset(Dataset):
-    """
-    Dataset for code classification tasks.
-    """
-    def __init__(
-        self,
-        embeddings: List[np.ndarray],
-        labels: Optional[List[int]] = None,
-        max_length: int = 1024
-    ):
-        """
-        Initialize dataset with code samples and labels.
-        
-        Args:
-            embeddings: List of precomputed embeddings
-            labels: Optional list of labels (1 for AI, 0 for human)
-            max_length: Maximum sequence length
-        """
-        self.embeddings = embeddings
-        self.labels = labels
-        self.max_length = max_length
-
-        
-    def __len__(self):
-        return len(self.embeddings)
     
-    def __getitem__(self, idx):
-        item = {
-            "embedding": self.embeddings[idx]
-        }
-        # Add label if available
-        if self.labels is not None:
-            item['labels'] = torch.tensor(self.labels[idx], dtype=torch.long)
-            
-        return item
 
-
-class UnixCoderClassifier(nn.Module):
+class Trainer:
     """
-    Classifier model that takes precomputed embeddings as input with a classification head.
+    Generic trainer class for training and evaluating embedding-based classifiers.
     """
     def __init__(
         self,
-        embedding_dim: int,
-        num_classes: int = 2,
-        dropout_rate: float = 0.1
-    ):
-        """
-        Initialize the classifier model.
-        Args:
-            embedding_dim: Dimension of the input embeddings
-            num_classes: Number of output classes (2 for binary classification)
-            dropout_rate: Dropout probability for regularization
-        """
-        super(UnixCoderClassifier, self).__init__()
-        self.classifier = nn.Sequential(
-            nn.Dropout(dropout_rate),
-            nn.Linear(embedding_dim, embedding_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(embedding_dim // 2, num_classes)
-        )
-    
-    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the model.
-        Args:
-            embedding: Precomputed embedding tensor (batch_size, embedding_dim)
-        Returns:
-            Logits for each class
-        """
-        logits = self.classifier(embedding)
-        return logits
-
-
-class UnixCoderClassifierTrainer:
-    """
-    Trainer class for training and evaluating the classifier on precomputed embeddings.
-    """
-    def __init__(
-        self,
-        model: UnixCoderClassifier,
+        model: nn.Module,
         device: Optional[torch.device] = None
     ):
         """
         Initialize the trainer.
         Args:
-            model: UnixCoderClassifier model
+            model: EmbeddingClassifier model
             device: Device to use for training (cpu or gpu)
         """
         self.device = device if device is not None else \
@@ -112,13 +39,12 @@ class UnixCoderClassifierTrainer:
     
     def train(
         self,
-        train_dataset: CodeDataset,
-        eval_dataset: Optional[CodeDataset] = None,
+        train_dataset: Dataset,
+        eval_dataset: Optional[Dataset] = None,
         batch_size: int = 16,
         learning_rate: float = 5e-5,
         num_epochs: int = 3,
         weight_decay: float = 0.01,
-        eval_steps: int = 100,
         save_dir: Optional[str] = None
     ) -> Dict[str, List[float]]:
         """
@@ -130,55 +56,55 @@ class UnixCoderClassifierTrainer:
             learning_rate: Learning rate for optimizer
             num_epochs: Number of training epochs
             weight_decay: Weight decay for regularization
-            eval_steps: Number of steps between evaluations
             save_dir: Directory to save model checkpoints
         Returns:
             Dictionary containing training metrics
         """
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        total_steps = len(train_loader) * num_epochs
+        
         metrics: Dict[str, List[float]] = {
             'train_loss': [], 'eval_loss': [], 'accuracy': [],
             'precision': [], 'recall': [], 'f1': [], 'auc': []
         }
+        
         logger.info(f"Starting training for {num_epochs} epochs...")
-        global_step = 0
+        
         for epoch in range(num_epochs):
             self.model.train()
             epoch_loss = 0
+            
             for batch in train_loader:
-                embeddings = batch['embedding'].to(self.device)
-                labels = batch['labels'].to(self.device)
+                embeddings = batch['embedding']
+                labels = batch['labels']
+                
                 optimizer.zero_grad()
                 logits = self.model(embeddings)
                 loss = self.loss_fn(logits, labels)
                 loss.backward()
                 optimizer.step()
+                
                 epoch_loss += loss.item()
-                global_step += 1
-                if eval_dataset and global_step % eval_steps == 0:
-                    eval_results = self.evaluate(eval_dataset, batch_size)
-                    logger.info(
-                        f"Step {global_step} | "
-                        f"Eval Loss: {eval_results['loss']:.4f} | "
-                        f"Accuracy: {eval_results['accuracy']:.4f} | "
-                        f"F1: {eval_results['f1']:.4f}"
-                    )
-                    for key in eval_results:
-                        if key in metrics:
-                            metrics[key].append(eval_results[key])
+            
             avg_epoch_loss = epoch_loss / len(train_loader)
             metrics['train_loss'].append(avg_epoch_loss)
-            logger.info(f"Epoch {epoch+1}/{num_epochs} | Train Loss: {avg_epoch_loss:.4f}")
+            
+            # Evaluate only at the end of each epoch
             if eval_dataset:
                 eval_results = self.evaluate(eval_dataset, batch_size)
                 logger.info(
                     f"Epoch {epoch+1}/{num_epochs} | "
+                    f"Train Loss: {avg_epoch_loss:.4f} | "
                     f"Eval Loss: {eval_results['loss']:.4f} | "
                     f"Accuracy: {eval_results['accuracy']:.4f} | "
                     f"F1: {eval_results['f1']:.4f}"
                 )
+                for key in eval_results:
+                    if key in metrics:
+                        metrics[key].append(eval_results[key])
+            else:
+                logger.info(f"Epoch {epoch+1}/{num_epochs} | Train Loss: {avg_epoch_loss:.4f}")
+        
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             self.save_model(
@@ -187,18 +113,28 @@ class UnixCoderClassifierTrainer:
                 test_metrics=self.evaluate(eval_dataset, batch_size) if eval_dataset else None
             )
         return metrics
+        
     def _process_batch(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        embeddings = batch['embedding'].to(self.device)
+        # Embeddings are already tensors on the correct device
+        embeddings = batch['embedding']
         labels = batch.get('labels', None)
-        if labels is not None:
-            labels = labels.to(self.device)
+        
         logits = self.model(embeddings)
         return logits, labels
+        
     def evaluate(
         self, 
-        eval_dataset: CodeDataset, 
+        eval_dataset: Dataset, 
         batch_size: int = 16
     ) -> Dict[str, float]:
+        """
+        Evaluate the model on a given dataset.
+        Args:
+            eval_dataset: Dataset to evaluate
+            batch_size: Batch size for evaluation
+        Returns:
+            Dictionary containing evaluation metrics    
+        """
         eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
         self.model.eval()
         all_preds: List[int] = []
@@ -234,13 +170,17 @@ class UnixCoderClassifierTrainer:
     
     def predict(
         self, 
-        embeddings: List[np.ndarray],
-        batch_size: int = 16
+        dataset: Dataset,
+        batch_size: int = 16,
     ) -> Tuple[List[int], List[float]]:
-        dataset = CodeDataset(
-            embeddings=embeddings,
-            labels=None
-        )
+        """
+        Predict the labels of a dataset.
+        Args:
+            dataset: Dataset to predict
+            batch_size: Batch size for prediction
+        Returns:
+            Tuple of lists containing predicted labels and probabilities
+        """
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
         self.model.eval()
         all_preds: List[int] = []
@@ -253,6 +193,7 @@ class UnixCoderClassifierTrainer:
                 all_preds.extend(preds.cpu().numpy())
                 all_probs.extend(probs[:, 1].cpu().numpy())
         return all_preds, all_probs
+        
     def save_model(
         self, 
         save_path: str, 
@@ -272,7 +213,7 @@ class UnixCoderClassifierTrainer:
         }
         
         model_info: Dict[str, Any] = {
-            "model_type": "unixcoder-classifier",
+            "model_type": "embedding-classifier",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "model_config": model_config,
             "train_metrics": train_metrics,
@@ -282,18 +223,28 @@ class UnixCoderClassifierTrainer:
         with open(info_path, 'w') as f:
             json.dump(model_info, f, indent=2)
         logger.info(f"Model and metrics saved to {save_path}")
+        
     @classmethod
     def load_model(
         cls,
+        model_name: str,
         model_path: str,
         embedding_dim: Optional[int] = None,
         device: Optional[torch.device] = None
-    ) -> 'UnixCoderClassifierTrainer':
-        # Load model config
+    ) -> 'Trainer':
+        """
+        Load a model from a given path.
+        Args:
+            model_name: Name of the model
+            model_path: Path to the model
+            embedding_dim: Dimension of the embeddings
+            device: Device to use for the model
+        Returns:
+            Trainer object
+        """
         with open(os.path.join(model_path, "model_info.json"), 'r') as f:
             model_info = json.load(f)
         
-        # Use saved config if available, otherwise use provided parameters
         model_config = model_info.get("model_config", {})
         embedding_dim = model_config.get("embedding_dim", embedding_dim)
         num_classes = model_config.get("num_classes", 2)
@@ -303,13 +254,15 @@ class UnixCoderClassifierTrainer:
             raise ValueError("embedding_dim must be provided either in model_info.json or as a parameter")
         
         # Initialize model with configuration
-        model = UnixCoderClassifier(
-            embedding_dim=embedding_dim,
-            num_classes=num_classes,
-            dropout_rate=dropout_rate
-        )
+        if model_name == "embedding_classifier":
+            model = EmbeddingClassifier(
+                embedding_dim=embedding_dim,
+                num_classes=num_classes,
+                dropout_rate=dropout_rate
+            )
+        else:
+            raise ValueError(f"Model type {model_name} not supported")
         
-        # Load the model weights
         model.load_state_dict(torch.load(
             os.path.join(model_path, "model.pt"),
             map_location=device if device else torch.device("cpu")
@@ -320,6 +273,7 @@ class UnixCoderClassifierTrainer:
             device=device
         )
         return trainer
+        
     def _extract_latest_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
         final_metrics = {}
         for key, value in metrics_dict.items():

@@ -6,15 +6,15 @@ import os
 from pathlib import Path
 
 # Base paths
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT", Path(__file__).parent.parent)
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-CACHE_DIR = os.path.join(DATA_DIR, "cache")
+EMBEDDINGS_DIR = os.path.join(PROJECT_ROOT, "embeddings")
 
 # Make sure directories exist
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
 
 # Model configurations
 MODEL_CONFIGS = {
@@ -71,21 +71,12 @@ MODEL_CONFIGS = {
             "cv": 3
         }
     },
-    "unixcoder": {
+    "embedding_classifier": {
         # Encoder settings
         "encoder": {
             "model_name": "microsoft/unixcoder-base",
             "max_length": 512,
-            "batch_size": 16,
-            "language_prefixes": {
-                "python": "<python> ",
-                "java": "<java> ",
-                "cpp": "<cpp> ",
-                "javascript": "<javascript> ",
-                "go": "<go> ",
-                "ruby": "<ruby> ",
-                "php": "<php> "
-            }
+            "batch_size": 16
         },
         
         # Model parameters
@@ -109,11 +100,12 @@ MODEL_CONFIGS = {
 }
 
 # File paths
-FILE_PATHS = {
-    "embeddings": os.path.join(DATA_DIR, "code_embeddings.pkl"),
-    "xgboost_model": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
+INFERENCE_FILE_PATHS = {
+    "embeddings": os.path.join(EMBEDDINGS_DIR, "unixcoder_embeddings.pkl"),
+    "xgboost": os.path.join(MODELS_DIR, "xgboost_model.pkl"),
     "xgboost_model_info": os.path.join(MODELS_DIR, "xgboost_model_info.json"),
-    "unixcoder_model": os.path.join(MODELS_DIR, "unixcoder_classifier")
+    "unixcoder": os.path.join(MODELS_DIR, "unixcoder_model.pth"),
+    "embedding_classifier": os.path.join(MODELS_DIR, "embedding_classifier.pth")
 }
 
 

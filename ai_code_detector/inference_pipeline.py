@@ -14,9 +14,11 @@ import sys
 from typing import Any, Dict, List, Optional
 
 # Import project modules
-from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
-from ai_code_detector.core import CodeDetector
-from ai_code_detector.models.feature_extractor import FeatureExtractor
+from ai_code_detector.config import INFERENCE_FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
+from ai_code_detector.models.code_embedder import CodeEmbeddingEncoder
+from ai_code_detector.models.unixcoder import UnixCoderModel
+from ai_code_detector.models.xgboost_classifier import XGBoostClassifier
+from ai_code_detector.trainer import Trainer
 
 # Set up logging
 logging.basicConfig(
@@ -26,17 +28,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class InferencePipeline(CodeDetector):
+class InferencePipeline:
     """
     Pipeline for making predictions on new code samples.
     
-    This class extends the base CodeDetector to provide a simple
-    interface for code detection.
+    This class provides a simple interface for code detection.
     """
     
     def __init__(
         self,
-        model_type: str = "xgboost",
+        model_name: str = "xgboost",
         threshold: float = 0.5,
         model_config: Optional[Dict[str, Any]] = None,
         model_path: Optional[str] = None
@@ -45,77 +46,70 @@ class InferencePipeline(CodeDetector):
         Initialize the inference pipeline.
         
         Args:
-            model_type: Type of model to use ("xgboost" or "unixcoder")
+            model_name: Type of model to use ("xgboost" or "unixcoder")
             threshold: Probability threshold for binary classification
             model_config: Optional model configuration
             model_path: Path to the model file
         """
         # Get configurations
-        self.model_type = model_type
+        self.model_name = model_name
         self.threshold = threshold
+        self.model_config = model_config
+        self.model_path = model_path or INFERENCE_FILE_PATHS[model_name]
+        self.code_embedding_model = CodeEmbeddingEncoder()
         
         # Use provided config or get from MODEL_CONFIGS
         if model_config is None:
-            if model_type not in MODEL_CONFIGS:
-                raise ValueError(f"Unsupported model type: {model_type}. "
+            if model_name not in MODEL_CONFIGS:
+                raise ValueError(f"Unsupported model type: {model_name}. "
                                  f"Available options: {list(MODEL_CONFIGS.keys())}")
-            model_config = MODEL_CONFIGS[model_type]
-        
-        # Use provided paths or get from FILE_PATHS
-        if model_path is None:
-            if model_type == "xgboost":
-                model_path = FILE_PATHS["xgboost_model"]
-            elif model_type == "unixcoder":
-                model_path = FILE_PATHS["unixcoder_model"]
-            else:
-                raise ValueError(f"Unsupported model type: {model_type}. "
-                                 f"Available options: {list(MODEL_CONFIGS.keys())}")
-                
+            model_config = MODEL_CONFIGS[model_name]
 
-        super().__init__(
-            model_config=model_config,
-            model_path=model_path,
-            load_model=True,
-            model_type=model_type
-        )
+        if model_name == "xgboost":
+            self.classifier = XGBoostClassifier()
+            model_info = self.classifier.load_model(self.model_path)
+            logger.info(f"Loaded model info: {model_info}")
+        elif model_name == "unixcoder":
+            self.model = UnixCoderModel()
+            self.classifier = Trainer(self.model)
+        else:
+            raise ValueError(f"Unsupported model type: {self.model_name}. "
+                                 f"Available options: {list(MODEL_CONFIGS.keys())}")
+
+
     
     def predict_single(
         self,
         code: str,
-        language: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Make a prediction for a single code sample.
         
         Args:
             code: Source code to analyze
-            language: Programming language of the code
             
         Returns:
             Dictionary with prediction results
         """
-        # Auto-detect language if not provided
-        if not language:
-            language = FeatureExtractor.detect_language(code)
-            logger.info(f"Detected language: {language}")
-        
-
         
         # Get prediction from base class
-        probabilities, detected_languages = super().predict([code], [language] if language else None)
+        if self.model_name == "xgboost":
+            embedding = self.code_embedding_model.encode(code)
+            probabilities = self.classifier.predict([embedding])
+        elif self.model_name == "embedding_classifier":
+            embedding = self.code_embedding_model.encode(code)
+            probabilities = self.classifier.predict(embedding)
         probability = float(probabilities[0])
         
         # Format the result
         return {
             'probability': probability,
             'is_ai_generated': probability > self.threshold,
-            'language': detected_languages[0]
         }
     
     def predict_batch(
         self,
         code_samples: List[str],
-        languages: Optional[List[str]] = None,
         sample_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -123,7 +117,6 @@ class InferencePipeline(CodeDetector):
         
         Args:
             code_samples: List of code strings to analyze
-            languages: Optional list of programming languages for each sample
             sample_ids: Optional list of identifiers for each sample
             
         Returns:
@@ -133,8 +126,16 @@ class InferencePipeline(CodeDetector):
             logger.warning("No code samples provided")
             return []
     
-        # Get predictions using base class
-        probabilities, detected_languages = super().predict(code_samples, languages)
+        # Get prediction from base class
+        if self.model_name == "xgboost":
+            embedding = self.code_embedding_model.batch_encode(code_samples)
+            probabilities = self.classifier.predict(embedding)
+        elif self.model_name == "embedding_classifier":
+            embedding = self.code_embedding_model.batch_encode(code_samples)
+            probabilities = self.classifier.predict(embedding)
+        if not probabilities:
+            logger.warning("No probabilities found")
+            return []
         
         # Format results
         results = []
@@ -144,7 +145,6 @@ class InferencePipeline(CodeDetector):
                 'id': sample_id,
                 'probability': float(prob),
                 'is_ai_generated': float(prob) > self.threshold,
-                'language': detected_languages[i],
             })
         
         return results
@@ -154,8 +154,8 @@ def main():
     """Main function to run the inference pipeline."""
     parser = argparse.ArgumentParser(description='Detect AI-generated code')
     parser.add_argument('--code', type=str, help='Direct code string to analyze (optional)')
-    parser.add_argument('--model-type', type=str, default='unixcoder', 
-                        choices=['xgboost', 'unixcoder'],
+    parser.add_argument('--model-name', type=str, default='xgboost', 
+                        choices=['xgboost', 'unixcoder', 'embedding_classifier'],
                         help='Type of model to use for prediction')
     parser.add_argument('--json', action='store_true', 
                         help='Output results in JSON format')
@@ -166,7 +166,7 @@ def main():
     
     # Initialize the inference pipeline
     pipeline = InferencePipeline(
-        model_type=args.model_type,
+        model_name=args.model_name,
         threshold=args.threshold
     )
     

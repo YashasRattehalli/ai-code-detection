@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from ai_code_detector.api.schema import CodeRequest, CodeResponse
 
 # Import project modules
-from ai_code_detector.config import FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
+from ai_code_detector.config import INFERENCE_FILE_PATHS, LOGGING_CONFIG, MODEL_CONFIGS
 from ai_code_detector.inference_pipeline import InferencePipeline
 
 # Set up logging
@@ -55,10 +55,10 @@ async def detect_code(request: CodeRequest):
         
         # Make prediction using the inference pipeline
         pipeline = InferencePipeline(
-            model_type="xgboost",
+            model_name="xgboost",
             threshold=0.5,
             model_config=MODEL_CONFIGS["xgboost"],
-            model_path=FILE_PATHS["xgboost_model"]
+            model_path=INFERENCE_FILE_PATHS["xgboost"]
         )
         result = pipeline.predict_single(
             code=request.code,
@@ -83,7 +83,7 @@ async def xgboost_model_info():
     """
     # Try to load model info including metrics
     try:
-        with open(FILE_PATHS["xgboost_model_info"], 'r', encoding='utf-8') as f:
+        with open(INFERENCE_FILE_PATHS["xgboost_model_info"], 'r', encoding='utf-8') as f:
             model_info = json.load(f)
     except Exception:
         model_info = None
@@ -108,10 +108,10 @@ async def detect_code_unixcoder(request: CodeRequest):
         
         # Make prediction using the inference pipeline
         pipeline = InferencePipeline(
-            model_type="unixcoder",
+            model_name="embedding_classifier",
             threshold=0.5,
-            model_config=MODEL_CONFIGS["unixcoder"],
-            model_path=FILE_PATHS["unixcoder_model"]
+            model_config=MODEL_CONFIGS["embedding_classifier"],
+            model_path=INFERENCE_FILE_PATHS["embedding_classifier"]
         )
         result = pipeline.predict_single(
             code=request.code,
