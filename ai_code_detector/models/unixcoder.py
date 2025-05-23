@@ -50,6 +50,12 @@ class UnixCoderDataset(Dataset):
     def __getitem__(self, idx):
         text = self.texts[idx]
         
+        # Handle missing/null values by converting to string
+        if text is None or (isinstance(text, float) and text != text):  # Check for NaN
+            text = ""  # Use empty string for missing values
+        elif not isinstance(text, str):
+            text = str(text)  # Convert to string if not already
+        
         # Tokenize the text
         encoding = self.tokenizer(
             text,

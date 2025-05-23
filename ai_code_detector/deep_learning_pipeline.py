@@ -74,6 +74,16 @@ class DeepLearningPipeline:
             dtype={'code': str, 'language': str, 'target': str}
         )
         
+        # Clean the data - remove rows with missing code
+        initial_size = len(df)
+        df = df.dropna(subset=['code'])  # Remove rows where code is NaN
+        df = df[df['code'].str.strip() != '']  # Remove rows where code is empty string
+        cleaned_size = len(df)
+        
+        if initial_size != cleaned_size:
+            logger.info(f"Removed {initial_size - cleaned_size} rows with missing/empty code. "
+                       f"Dataset size: {initial_size} -> {cleaned_size}")
+        
         # Create binary labels
         df['label'] = df['target'].apply(lambda x: 1 if x == 'ai' else 0)
         
