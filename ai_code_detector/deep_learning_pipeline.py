@@ -18,7 +18,7 @@ import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
 
-from ai_code_detector.config import EMBEDDINGS_DIR, LOGGING_CONFIG, MODELS_DIR
+from ai_code_detector.config import EMBEDDINGS_DIR, LOGGING_CONFIG, MODELS_DIR, PROJECT_ROOT
 from ai_code_detector.models.code_embedder import CodeEmbeddingEncoder
 from ai_code_detector.models.embedding_classifier import EmbeddingClassifier, EmbeddingDataset
 from ai_code_detector.models.unixcoder import UnixCoderDataset, UnixCoderModel
@@ -259,9 +259,10 @@ class DeepLearningPipeline:
 def main():
     """Main function to run the deep learning pipeline."""
     parser = argparse.ArgumentParser(description='Train deep learning models for AI code detection')
-    parser.add_argument('--dataset', type=str, required=True,
+    parser.add_argument('--dataset', type=str,
+                        default=os.path.join(PROJECT_ROOT, 'data', 'dataset_val.csv'),
                         help='Path to the training dataset CSV file')
-    parser.add_argument('--model-name', type=str, default='microsoft/unixcoder-base',
+    parser.add_argument('--model-name', type=str, default='unixcoder',
                         help='Name of the base model to use')
     parser.add_argument('--output-dir', type=str, default='./models',
                         help='Directory to save trained models')
