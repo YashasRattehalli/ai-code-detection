@@ -21,7 +21,7 @@ from sklearn.model_selection import train_test_split
 from ai_code_detector.config import EMBEDDINGS_DIR, LOGGING_CONFIG, MODELS_DIR
 from ai_code_detector.models.code_embedder import CodeEmbeddingEncoder
 from ai_code_detector.models.embedding_classifier import EmbeddingClassifier, EmbeddingDataset
-from ai_code_detector.models.unixcoder import CodeDataset, UnixCoderClassifier
+from ai_code_detector.models.unixcoder import UnixCoderDataset, UnixCoderModel
 from ai_code_detector.trainer import Trainer
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -145,7 +145,7 @@ class DeepLearningPipeline:
         train_df: pd.DataFrame,
         val_df: pd.DataFrame,
         test_df: pd.DataFrame
-    ) -> Tuple[Union[CodeDataset, EmbeddingDataset], Union[CodeDataset, EmbeddingDataset], Union[CodeDataset, EmbeddingDataset]]:
+    ) -> Tuple[Union[UnixCoderDataset, EmbeddingDataset], Union[UnixCoderDataset, EmbeddingDataset], Union[UnixCoderDataset, EmbeddingDataset]]:
         """Create PyTorch datasets for training."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -159,9 +159,9 @@ class DeepLearningPipeline:
         test_labels = test_df['label'].tolist()
         
         if self.model_name == "unixcoder":
-            train_dataset = CodeDataset(train_embeddings, train_labels, device)
-            val_dataset = CodeDataset(val_embeddings, val_labels, device)
-            test_dataset = CodeDataset(test_embeddings, test_labels, device)
+            train_dataset = UnixCoderDataset(train_embeddings, train_labels, device)
+            val_dataset = UnixCoderDataset(val_embeddings, val_labels, device)
+            test_dataset = UnixCoderDataset(test_embeddings, test_labels, device)
         else:  # embedding classifier
             train_dataset = EmbeddingDataset(train_embeddings, train_labels)
             val_dataset = EmbeddingDataset(val_embeddings, val_labels)
@@ -179,29 +179,24 @@ class DeepLearningPipeline:
         learning_rate: float = 2e-5,
         num_epochs: int = 3,
         weight_decay: float = 0.01,
-        run_name: Optional[str] = None
+        run_name: Optional[str] = None,
+        need_embeddings: bool = False
     ) -> Tuple[Trainer, Dict, Dict]:
         """Run the complete training pipeline."""
         logger.info(f"Starting {self.model_name} deep learning pipeline...")
         start_time = time.time()
         
         # Create model output directory
-        run_id = run_name or f"{self.model_name}_classifier"
+        run_id = run_name or f"{self.model_name}_{time.strftime('%Y%m%d_%H%M%S')}"
         model_dir = os.path.join(MODELS_DIR, run_id)
         os.makedirs(model_dir, exist_ok=True)
         
         # 1. Load and prepare data
         train_df, val_df, test_df = self.load_data(
             dataset_path=dataset_path,
+            need_embeddings=need_embeddings
         )
-        
-        # Check if embeddings are loaded
-        if 'embedding' not in train_df.columns or train_df['embedding'].isnull().any():
-            raise ValueError("Embeddings are required but are missing in the dataset")
-        
-        # Get embedding dimension from first sample
-        embedding_dim = train_df['embedding'].iloc[0].shape[0]
-        logger.info(f"Using embeddings with dimension: {embedding_dim}")
+    
         
         # 2. Create datasets
         train_dataset, val_dataset, test_dataset = self.create_datasets(
@@ -214,18 +209,16 @@ class DeepLearningPipeline:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         if self.model_name == "unixcoder":
-            model = UnixCoderClassifier(
-                embedding_dim=embedding_dim,
-                num_classes=2,
-                dropout_rate=0.1
+            model = UnixCoderModel(
+                model_name=self.model_name
             )
 
         else:  # embedding classifier
             # Use hidden layers if provided, otherwise default architecture
             model = EmbeddingClassifier(
-                embedding_dim=embedding_dim,
-                num_classes=2
+                embedding_dim=self.encoder.embedding_dim
             )
+        
         trainer = Trainer(model=model, device=device)
         
         logger.info(f"Initialized {self.model_name} model and trainer on {device}")
