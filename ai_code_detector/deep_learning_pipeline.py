@@ -51,7 +51,6 @@ class DeepLearningPipeline:
         
         # Initialize encoder
         self.encoder = CodeEmbeddingEncoder(
-            model_name=model_name,
             cache_dir=EMBEDDINGS_DIR
         )
         
@@ -149,20 +148,22 @@ class DeepLearningPipeline:
         """Create PyTorch datasets for training."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Extract embeddings and labels
-        train_embeddings = [np.array(emb) for emb in train_df['embedding']]
-        val_embeddings = [np.array(emb) for emb in val_df['embedding']]
-        test_embeddings = [np.array(emb) for emb in test_df['embedding']]
         
         train_labels = train_df['label'].tolist()
         val_labels = val_df['label'].tolist()
         test_labels = test_df['label'].tolist()
         
         if self.model_name == "unixcoder":
-            train_dataset = UnixCoderDataset(train_embeddings, train_labels, device)
-            val_dataset = UnixCoderDataset(val_embeddings, val_labels, device)
-            test_dataset = UnixCoderDataset(test_embeddings, test_labels, device)
+            train_texts = train_df['code'].tolist()
+            val_texts = val_df['code'].tolist()
+            test_texts = test_df['code'].tolist()
+            train_dataset = UnixCoderDataset(texts=train_texts, labels=train_labels, device=device)
+            val_dataset = UnixCoderDataset(texts=val_texts, labels=val_labels, device=device)
+            test_dataset = UnixCoderDataset(texts=test_texts, labels=test_labels, device=device)
         else:  # embedding classifier
+            train_embeddings = [np.array(emb) for emb in train_df['embedding']]
+            val_embeddings = [np.array(emb) for emb in val_df['embedding']]
+            test_embeddings = [np.array(emb) for emb in test_df['embedding']]
             train_dataset = EmbeddingDataset(train_embeddings, train_labels)
             val_dataset = EmbeddingDataset(val_embeddings, val_labels)
             test_dataset = EmbeddingDataset(test_embeddings, test_labels)
@@ -209,9 +210,7 @@ class DeepLearningPipeline:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         if self.model_name == "unixcoder":
-            model = UnixCoderModel(
-                model_name=self.model_name
-            )
+            model = UnixCoderModel()
 
         else:  # embedding classifier
             # Use hidden layers if provided, otherwise default architecture

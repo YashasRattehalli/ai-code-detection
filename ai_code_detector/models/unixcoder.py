@@ -18,7 +18,7 @@ class UnixCoderDataset(Dataset):
         texts: List[str],
         labels: Optional[List[int]] = None,
         tokenizer_name: str = "microsoft/unixcoder-base",
-        max_length: int = 512,
+        max_length: int = 1024,
         device: Optional[torch.device] = None
     ):
         """
